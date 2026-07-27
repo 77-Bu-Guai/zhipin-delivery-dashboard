@@ -235,10 +235,12 @@ export function generateMockLogs(count: number = 60): DeliveryLog[] {
         errMsg: '',
         errState: '过滤',
       } : undefined,
+      dataSource: 'mock',
       url: `https://www.zhipin.com/job_detail/${i + 1}.html`,
       message: status === 'success' ? '沟通中' : status === 'screened' ? 'AI筛选' : status === 'failed' ? '投递失败' : '待处理',
       processorType: status === 'screened' || status === 'failed' ? 'aiFiltering' : 'basic',
       encryptJobId: `mock-${i}-${Date.now()}`,
+      filterStateName: status === 'success' ? '投递成功' : 'AI筛选',
     });
     usedCompanies.add(company);
   }

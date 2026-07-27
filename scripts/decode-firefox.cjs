@@ -168,8 +168,17 @@ const KEY_MAP = {
 
 // ====== 读取 Firefox 数据 ======
 function readFirefoxStorageData(profileName, options = {}) {
-  const { verbose = false } = options;
+  const { verbose = false, dbPath: externalDbPath } = options;
   const log = verbose ? console.log : () => {};
+
+  // 如果传入了外部 dbPath，直接使用（多轮重试场景）
+  if (externalDbPath) {
+    if (!fs.existsSync(externalDbPath)) {
+      log(`  [Firefox] 外部 dbPath 不存在: ${externalDbPath}`);
+      return {};
+    }
+    return readFromSqlite(externalDbPath, log);
+  }
 
   const profile = profileName || 'uz0ave2f.default-release-1782316007966';
   const ffProf = path.join(process.env.APPDATA, 'Mozilla', 'Firefox', 'Profiles', profile, 'storage', 'default');
@@ -202,50 +211,88 @@ function readFirefoxStorageData(profileName, options = {}) {
   const tmp = path.join(process.env.TEMP || '/tmp', 'ff-export-v3.sqlite');
   fs.copyFileSync(src, tmp);
 
-  const db = new Database(tmp, { readonly: true });
-  const rows = db.prepare("SELECT key, data FROM object_data").all();
-  
-  const result = {};
-  let recordCount = 0;
-
-  for (const row of rows) {
-    const rawKey = Buffer.from(row.key).toString('utf-8');
-    const decodedKey = caesarDecode(rawKey);
-    const normalizedKey = KEY_MAP[decodedKey];
-
-    // 跳过不相关的键
-    if (!normalizedKey && decodedKey.startsWith('0netConf')) continue;
-    if (!normalizedKey) {
-      log(`  [Firefox] ⏭️ 跳过未知键: ${decodedKey}`);
-      continue;
-    }
-
-    const dataBuf = Buffer.from(row.data);
-
-    try {
-      const decompressed = snappy.uncompressSync(dataBuf);
-      const decoded = decodeStructuredClone(decompressed);
-      result[normalizedKey] = decoded;
-
-      if (normalizedKey === 'pipeline-cache' && decoded?.data) {
-        recordCount = Object.keys(decoded.data).length;
-      }
-      log(`  [Firefox] ✅ ${normalizedKey}: ${JSON.stringify(decoded).slice(0, 80)}`);
-    } catch (e) {
-      log(`  [Firefox] ❌ ${normalizedKey || decodedKey}: ${e.message}`);
-    }
-  }
-
-  db.close();
+  const result = readFromSqlite(tmp, log);
   try { fs.unlinkSync(tmp); } catch {}
-
-  if (recordCount > 0) {
-    console.log(`  [Firefox] ✅ 读取成功，${recordCount} 条投递记录`);
-  } else {
-    console.log(`  [Firefox] ⚠️ 未找到投递记录`);
-  }
-  
   return result;
+}
+
+/** 从指定的 SQLite 文件读取 IndexedDB 数据 */
+function readFromSqlite(sqlitePath, log = () => {}) {
+  let decodeErrors = [];
+  
+  try {
+    const db = new Database(sqlitePath, { readonly: true });
+    const rows = db.prepare("SELECT key, data FROM object_data").all();
+    
+    const result = {};
+    let recordCount = 0;
+
+    for (const row of rows) {
+      const rawKey = Buffer.from(row.key).toString('utf-8');
+      const decodedKey = caesarDecode(rawKey);
+      const normalizedKey = KEY_MAP[decodedKey];
+
+      if (!normalizedKey && decodedKey.startsWith('0netConf')) continue;
+      if (!normalizedKey) {
+        log(`  [Firefox] ⏭️ 跳过未知键: ${decodedKey}`);
+        continue;
+      }
+
+      const dataBuf = Buffer.from(row.data);
+      const isPipeline = normalizedKey === 'pipeline-cache';
+
+      try {
+        // 尝试 Snappy 解压
+        let decompressed;
+        try {
+          decompressed = snappy.uncompressSync(dataBuf);
+        } catch (e) {
+          decodeErrors.push(`${normalizedKey}: Snappy 解压失败 (${e.message})`);
+          if (isPipeline) {
+            // pipeline-cache 必须解压成功，跳过
+            continue;
+          }
+          // 非 pipeline 键尝试直接使用原始数据
+          decompressed = dataBuf;
+        }
+
+        const decoded = decodeStructuredClone(decompressed);
+        result[normalizedKey] = decoded;
+
+        if (isPipeline && decoded?.data) {
+          recordCount = Object.keys(decoded.data).length;
+        } else if (isPipeline) {
+          decodeErrors.push('pipeline-cache: 解码后无 data 字段');
+        }
+        log(`  [Firefox] ✅ ${normalizedKey}: ${JSON.stringify(decoded).slice(0, 80)}`);
+      } catch (e) {
+        const errMsg = `${normalizedKey}: 结构化克隆解码失败 (${e.message})`;
+        decodeErrors.push(errMsg);
+        log(`  [Firefox] ❌ ${errMsg}`);
+      }
+    }
+
+    db.close();
+
+    if (recordCount > 0) {
+      console.log(`  [Firefox] ✅ 读取成功，${recordCount} 条投递记录`);
+    } else {
+      console.log(`  [Firefox] ⚠️ 未找到投递记录`);
+    }
+
+    // 输出解码错误汇总
+    if (decodeErrors.length > 0) {
+      console.log(`  [Firefox] ⚠️ ${decodeErrors.length} 个解码问题:`);
+      for (const err of decodeErrors) {
+        console.log(`     - ${err}`);
+      }
+    }
+    
+    return result;
+  } catch (e) {
+    console.log(`  [Firefox] ❌ SQLite 读取失败: ${e.message}`);
+    return {};
+  }
 }
 
 if (require.main === module) {

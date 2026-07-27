@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>FilterReasonColumn · 设计预览</title>
+<style>
+  :root {
+    --bg-root: #faf9f6;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f3f1ec;
+    --border-default: #e8e5dd;
+    --border-subtle: #f0ede6;
+    --text-primary: #1a1a18;
+    --text-secondary: #6b675b;
+    --text-tertiary: #9c988c;
+    --accent: #d9704a;
+    --success: #059669;
+    --error: #dc2626;
+  }
+  body {
+    margin: 0;
+    background: var(--bg-root);
+    font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    color: var(--text-primary);
+    padding: 32px 24px;
+    min-height: 100vh;
+    font-size: 14px;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+  p.lead { color: var(--text-secondary); font-size: 13px; margin: 0 0 28px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-bottom: 28px; }
+  .panel { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 16px; padding: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+  .panel h2 { margin: 0 0 10px; font-size: 12px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+
+  /* 表格骨架 */
+  .table { width: 100%; border-collapse: collapse; }
+  .table th { text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--border-subtle); background: #f7f5f0; }
+  .table td { padding: 12px 14px; vertical-align: top; border-bottom: 1px solid var(--border-subtle); font-size: 13px; }
+  .table tr:hover td { background: #faf9f6; }
+
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+  .pill-grey { background: #f3f1ec; color: #6b675b; border: 1px solid #e8e5dd; }
+  .pill-red  { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+  .pill-green { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+  .job { color: #1a1a18; font-weight: 500; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+  .company { color: #6b675b; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; font-size: 12px; }
+  .time { color: #9c988c; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+
+  /* 旧样式 — 长文本 */
+  .old-reason { font-size: 12px; color: #6b675b; line-height: 1.7; word-break: break-all; }
+
+  /* 新样式 — 三段式 */
+  .ai-bar { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: #f3f1ec; border: 1px solid #e8e5dd; border-radius: 6px; }
+  .ai-grade { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 4px; font-family: Georgia, serif; font-size: 11px; font-weight: 700; }
+  .ai-grade.pos { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+  .ai-grade.neg { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+  .ai-label { font-size: 11px; color: #6b675b; font-weight: 500; }
+  .ai-dot { color: #d4d0c7; }
+  .ai-score { margin-left: auto; font-family: Georgia, serif; font-size: 13px; font-weight: 700; line-height: 1; }
+  .ai-score.pos { color: #059669; }
+  .ai-score.neg { color: #dc2626; }
+
+  .seg-head { display: flex; align-items: center; gap: 6px; padding: 0 4px; }
+  .seg-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 4px; font-size: 10px; font-weight: 700; }
+  .seg-icon.neg { background: #fee2e2; color: #b91c1c; }
+  .seg-icon.pos { background: #d1fae5; color: #047857; }
+  .seg-name { font-size: 11px; font-weight: 600; }
+  .seg-name.neg { color: #b91c1c; }
+  .seg-name.pos { color: #047857; }
+  .seg-count { font-size: 11px; color: #9c988c; }
+  .seg-total { margin-left: auto; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .seg-total.neg { color: #b91c1c; }
+  .seg-total.pos { color: #047857; }
+
+  .neg-list { list-style: none; margin: 4px 0 0; padding: 0; }
+  .neg-list li { display: flex; align-items: center; gap: 6px; padding: 2px 6px; border-radius: 3px; font-size: 11px; color: #1a1a18; }
+  .neg-list li:hover { background: #fef2f2; }
+  .neg-list .reason { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .neg-list .pts { color: #dc2626; font-weight: 600; font-family: 'JetBrains Mono', monospace; font-size: 11px; flex-shrink: 0; }
+
+  .pos-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 4px; }
+  .pos-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px; border-radius: 4px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #047857; font-size: 11px; max-width: 160px; }
+  .pos-chip span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pos-chip b { font-weight: 600; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+
+  .legend { font-size: 12px; color: var(--text-secondary); line-height: 1.8; background: var(--bg-subtle); padding: 16px 20px; border-radius: 12px; border: 1px dashed var(--border-default); margin-top: 24px; }
+  .legend b { color: var(--text-primary); }
+  .legend code { background: white; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--border-default); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>FilterReasonColumn 组件 · 设计预览</h1>
+  <p class="lead">左侧：改造前（拼接长字符串 + line-clamp-2，挤掉半屏）；右侧：改造后（三段式紧凑列，固定宽度 288px）</p>
+
+  <div class="row">
+    <!-- 改造前 -->
+    <div class="panel">
+      <h2>改造前 · 一行长文本</h2>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>分类</th>
+            <th>岗位</th>
+            <th>公司</th>
+            <th>结果</th>
+            <th>筛选原因</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="pill pill-grey">其他</span></td>
+            <td><span class="job">高级策划专员 (MJ000061)</span></td>
+            <td><span class="company">华巨臣</span></td>
+            <td><span class="pill pill-red">投递成功</span></td>
+            <td class="old-reason">分数645 消极: JD写：3年以上活动策划工作经验/(50分) JD写：薪资8-12K/(10分) 积极: 本科以上学历/(105分) 经验不限于本岗位/(13分) 晋升空间大/(10分) 13薪/(10分) JD写：文案能力/(5分) 策划方案/(10分) 沟通统筹方案/(15分) JD写：对人脉积累兴趣优先/(15分) JD写：管理能力/(10分) ...</td>
+          </tr>
+          <tr>
+            <td><span class="pill pill-grey">运营</span></td>
+            <td><span class="job">新媒体运营实习生</span></td>
+            <td><span class="company">某互联网公司</span></td>
+            <td><span class="pill pill-red">系统筛选</span></td>
+            <td class="old-reason">距离过远 · 不活跃 · 经验不足</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 改造后 -->
+    <div class="panel">
+      <h2>改造后 · 三段式紧凑列（288px 固定宽）</h2>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>分类</th>
+            <th>岗位</th>
+            <th>公司</th>
+            <th>结果</th>
+            <th style="width:300px">筛选原因</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="pill pill-grey">其他</span></td>
+            <td><span class="job">高级策划专员 (MJ000061)</span></td>
+            <td><span class="company">华巨臣</span></td>
+            <td><span class="pill pill-red">投递成功</span></td>
+            <td>
+              <!-- 新组件渲染 -->
+              <div style="width:288px;display:flex;flex-direction:column;gap:6px;">
+                <div class="ai-bar">
+                  <span class="ai-grade pos">B</span>
+                  <span class="ai-label">AI评分</span>
+                  <span class="ai-dot">·</span>
+                  <span class="ai-label">投递状态</span>
+                  <span class="ai-score pos">+645</span>
+                </div>
+                <div>
+                  <div class="seg-head">
+                    <span class="seg-icon neg">✕</span>
+                    <span class="seg-name neg">消极评分</span>
+                    <span class="seg-count">· 2 项</span>
+                    <span class="seg-total neg">-60</span>
+                  </div>
+                  <ul class="neg-list">
+                    <li><span class="reason">3年以上活动策划工作经验</span><span class="pts">-50</span></li>
+                    <li><span class="reason">薪资 8-12K</span><span class="pts">-10</span></li>
+                  </ul>
+                </div>
+                <div>
+                  <div class="seg-head">
+                    <span class="seg-icon pos">✓</span>
+                    <span class="seg-name pos">积极评分</span>
+                    <span class="seg-count">· 9 项</span>
+                    <span class="seg-total pos">+705</span>
+                  </div>
+                  <div class="pos-chips">
+                    <span class="pos-chip"><span>本科以上学历</span><b>+105</b></span>
+                    <span class="pos-chip"><span>经验不限</span><b>+13</b></span>
+                    <span class="pos-chip"><span>晋升空间大</span><b>+10</b></span>
+                    <span class="pos-chip"><span>13薪</span><b>+10</b></span>
+                    <span class="pos-chip"><span>策划方案</span><b>+10</b></span>
+                    <span class="pos-chip"><span>管理能力</span><b>+10</b></span>
+                    <span class="pos-chip"><span>沟通统筹</span><b>+15</b></span>
+                    <span class="pos-chip"><span>+2 项</span></span>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td><span class="pill pill-grey">运营</span></td>
+            <td><span class="job">新媒体运营实习生</span></td>
+            <td><span class="company">某互联网公司</span></td>
+            <td><span class="pill pill-red">系统筛选</span></td>
+            <td>
+              <!-- 非 AI 筛选的 fallback：直接用 fallback 文案 -->
+              <span style="font-size:12px;color:#6b675b;">距离过远 · 不活跃</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="legend">
+    <b>设计要点：</b><br/>
+    ① <b>列宽锁定 288px</b>（<code>w-72</code>），不再无限扩张挤压其他列<br/>
+    ② <b>三段式结构</b>：顶部 AI评分（等级 + 总分一眼可见）→ 消极（红）→ 积极（绿）<br/>
+    ③ <b>消极用紧凑列表</b>（每行：原因 + 分值），每行可 hover 高亮<br/>
+    ④ <b>积极用 chip 流式布局</b>（小分值项压缩展示），节省垂直空间<br/>
+    ⑤ <b>超过 4 项折叠</b>为「+N 项未显示」/「+N」，避免信息过载<br/>
+    ⑥ <b>非 AI 筛选走 fallback</b>（地址/活跃度/系统筛选），保持原简单文案<br/>
+    ⑦ 全部用 <b>2xs 字号</b>（11px）+ 等宽数字，扫读更高效
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>RawScoreBreakdown · 设计预览</title>
+<style>
+  /* 复用项目设计 tokens */
+  :root {
+    --bg-root: #faf9f6;
+    --bg-surface: #ffffff;
+    --bg-subtle: #f3f1ec;
+    --border-default: #e8e5dd;
+    --border-subtle: #f0ede6;
+    --text-primary: #1a1a18;
+    --text-secondary: #6b675b;
+    --text-tertiary: #9c988c;
+    --accent: #d9704a;
+    --success: #059669;
+    --error: #dc2626;
+    --warning: #d97706;
+  }
+  body {
+    margin: 0;
+    background: var(--bg-root);
+    font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    color: var(--text-primary);
+    padding: 48px 24px;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 8px; color: var(--text-primary); }
+  p.lead { color: var(--text-secondary); font-size: 13px; margin: 0 0 32px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
+  .panel { background: var(--bg-surface); border: 1px solid var(--border-default); border-radius: 16px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+  .panel h2 { margin: 0 0 12px; font-size: 13px; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+  .old-text { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-secondary); background: var(--bg-subtle); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 12px; line-height: 1.6; word-break: break-all; max-height: 460px; overflow-y: auto; }
+  .new-mount { /* 容器，被 React 填充 */ }
+  .legend { font-size: 12px; color: var(--text-secondary); line-height: 1.8; background: var(--bg-subtle); padding: 16px 20px; border-radius: 12px; border: 1px dashed var(--border-default); }
+  .legend b { color: var(--text-primary); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RawScoreBreakdown 组件 · 设计预览</h1>
+  <p class="lead">左侧是改造前的「原始评分文本」效果（纯文本 dump）；右侧是改造后的可视化版（关键词/原因/分值分块呈现）</p>
+
+  <div class="row">
+    <div class="panel">
+      <h2>改造前 · 纯文本</h2>
+      <div class="old-text">分数240
+消极:
+JD写：&lt;英语好&gt;，&lt;英语读写能力良好&gt;/(50分)
+
+积极:
+JD写：&lt;项目助理&gt;，&lt;岗位名相符&gt;/(150分)
+JD写：&lt;五险一金&gt;，&lt;福利明确&gt;/(5分)
+JD写：&lt;定期体检&gt;，&lt;福利明确&gt;/(5分)
+JD写：&lt;跨组协调&gt;，&lt;职责相关&gt;/(10分)
+JD写：&lt;会议组织&gt;，&lt;职责相关&gt;/(10分)
+JD写：&lt;计算机相关专业&gt;，&lt;标签命中&gt;/(5分)
+JD写：&lt;经验不限&gt;，&lt;应届友好&gt;/(5分)</div>
+    </div>
+
+    <div class="panel">
+      <h2>改造后 · 可视化版</h2>
+      <div id="mount" class="new-mount"></div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <b>设计要点：</b><br/>
+    ① 顶部一行展示「投递状态 + 总分 + 等级徽章」，一眼看到结论<br/>
+    ② 消极（红）/ 积极（绿）严格分块，颜色一致建立视觉锚点<br/>
+    ③ 关键词 <code>&lt;keyword&gt;</code> 用<b>实色填充</b>的 Badge 高亮 — 更深的视觉权重<br/>
+    ④ 匹配原因 <code>&lt;reason&gt;</code> 用<b>浅描边</b>的 Badge — 浅一档避免抢戏<br/>
+    ⑤ 分值右对齐 + 颜色对应 + 数字加粗 — 「该不该投」的关键结论一眼可见<br/>
+    ⑥ 整段 hover 加深底色，便于用户聚焦到当前正在阅读的那一条
+  </div>
+</div>
+
+<!-- 把组件挂载到这个 div，附带 Tailwind -->
+<script type="module">
+  // 简化版组件（脱离项目 React 环境，直接渲染）
+  const sample = `分数240
+消极:
+JD写：<英语好>，<英语读写能力良好>/(50分)
+
+积极:
+JD写：<项目助理>，<岗位名相符>/(150分)
+JD写：<五险一金>，<福利明确>/(5分)
+JD写：<定期体检>，<福利明确>/(5分)
+JD写：<跨组协调>，<职责相关>/(10分)
+JD写：<会议组织>，<职责相关>/(10分)
+JD写：<计算机相关专业>，<标签命中>/(5分)
+JD写：<经验不限>，<应届友好>/(5分)`;
+
+  function parseLine(line, type) {
+    const m = line.match(/[\/（(]\s*(\d+)\s*分\s*[）)]?\s*$/);
+    if (!m) return null;
+    const points = parseInt(m[1], 10);
+    let body = line
+      .replace(/^(?:JD\s*写|JD写|触发词|岗位名|岗位要求|JD中)[：:]\s*/i, '')
+      .replace(/[\/（(]\s*\d+\s*分\s*[）)]?\s*$/, '')
+      .replace(/\d+\s*分\s*$/, '')
+      .trim();
+    const bm = body.match(/^<([^>]+)>\s*[，,，]\s*<([^>]+)>\s*$/);
+    if (bm) return { keyword: bm[1], reason: bm[2], points, type };
+    const parts = body.split(/[，,，]/).map(s => s.trim()).filter(Boolean);
+    if (parts.length >= 2) return { keyword: parts[0], reason: parts.slice(1).join('，'), points, type };
+    return { keyword: body, reason: '—', points, type };
+  }
+
+  const lines = sample.split('\n').map(l => l.trim()).filter(Boolean);
+  const totalMatch = lines.find(l => l.startsWith('分数'))?.match(/(-?\d+)/);
+  const totalScore = totalMatch ? parseInt(totalMatch[1], 10) : 0;
+  const negStart = lines.findIndex(l => l.includes('消极'));
+  const posStart = lines.findIndex(l => l.includes('积极'));
+
+  const negItems = [];
+  const posItems = [];
+  if (negStart >= 0) {
+    const end = posStart >= 0 ? posStart : lines.length;
+    for (let i = negStart + 1; i < end; i++) {
+      const it = parseLine(lines[i], 'negative');
+      if (it) negItems.push(it);
+    }
+  }
+  if (posStart >= 0) {
+    for (let i = posStart + 1; i < lines.length; i++) {
+      const it = parseLine(lines[i], 'positive');
+      if (it) posItems.push(it);
+    }
+  }
+
+  const getGrade = (s) => {
+    if (s >= 100) return { label: 'S', bg: '#ecfdf5', text: '#059669', border: '#a7f3d0' };
+    if (s >= 50)  return { label: 'A', bg: '#ecfdf5', text: '#10b981', border: '#a7f3d0' };
+    if (s >= 0)   return { label: 'B', bg: '#f0f9ff', text: '#0284c7', border: '#bae6fd' };
+    if (s >= -100)return { label: 'C', bg: '#fffbeb', text: '#d97706', border: '#fde68a' };
+    if (s >= -500)return { label: 'D', bg: '#fff7ed', text: '#ea580c', border: '#fed7aa' };
+    return { label: 'F', bg: '#fef2f2', text: '#dc2626', border: '#fecaca' };
+  };
+  const grade = getGrade(totalScore);
+  const isPos = totalScore >= 0;
+
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  function rowHTML(it) {
+    const isNeg = it.type === 'negative';
+    const sign = isNeg ? '-' : '+';
+    const kwBg = isNeg ? '#fee2e2' : '#d1fae5';
+    const kwText = isNeg ? '#b91c1c' : '#047857';
+    const kwBorder = isNeg ? '#fca5a5' : '#6ee7b7';
+    const rText = '#b45309';
+    const rBorder = '#fde68a';
+    const rBg = '#fffbeb';
+    const scoreColor = isNeg ? '#dc2626' : '#059669';
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:white;border-bottom:1px solid #f5f3ee;font-size:13px;">
+        <span style="font-size:11px;color:#9c988c;flex-shrink:0;">JD写：</span>
+        <span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:6px;background:${kwBg};color:${kwText};border:1px solid ${kwBorder};font-size:12px;font-weight:600;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(it.keyword)}">${esc(it.keyword)}</span>
+        <span style="color:#d4d0c7;">，</span>
+        <span style="display:inline-flex;align-items:center;padding:2px 8px;border-radius:6px;background:${rBg};color:${rText};border:1px solid ${rBorder};font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(it.reason)}">${esc(it.reason)}</span>
+        <span style="margin-left:auto;font-weight:700;font-size:12px;color:${scoreColor};flex-shrink:0;font-variant-numeric:tabular-nums;">${sign}${it.points}</span>
+      </div>`;
+  }
+
+  function sectionHTML(items, type, label) {
+    if (items.length === 0) return '';
+    const isNeg = type === 'negative';
+    const AccBg = isNeg ? '#fef2f2' : '#ecfdf5';
+    const AccText = isNeg ? '#dc2626' : '#059669';
+    const AccBorder = isNeg ? '#fecaca' : '#a7f3d0';
+    const total = items.reduce((s, i) => s + i.points, 0);
+    const sign = isNeg ? '-' : '+';
+    return `
+      <div style="margin-top:14px;">
+        <div style="display:flex;align-items:center;gap:8px;padding:0 4px;margin-bottom:8px;">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;background:${AccBg};color:${AccText};">${isNeg ? '✕' : '✓'}</span>
+          <span style="font-size:13px;font-weight:600;color:${AccText};">${label}</span>
+          <span style="font-size:11px;color:#9c988c;">${items.length} 项</span>
+          <span style="margin-left:auto;font-size:12px;"><b style="color:${AccText};">${sign}${total}</b><span style="color:#9c988c;margin-left:2px;">分</span></span>
+        </div>
+        <div style="border:1px solid ${AccBorder};border-radius:12px;overflow:hidden;">
+          ${items.map(rowHTML).join('')}
+        </div>
+      </div>`;
+  }
+
+  document.getElementById('mount').innerHTML = `
+    <div style="background:#f3f1ec;border:1px solid #e8e5dd;border-radius:12px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div style="width:38px;height:38px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:${grade.bg};color:${grade.text};border:1px solid ${grade.border};font-family:Georgia,serif;font-size:15px;font-weight:700;">${grade.label}</div>
+        <div>
+          <div style="font-size:12px;color:#6b675b;line-height:1.2;">投递状态 · 综合评分</div>
+          <div style="font-size:11px;color:#9c988c;margin-top:2px;">消极 ${negItems.length} 项 · 积极 ${posItems.length} 项</div>
+        </div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-family:Georgia,serif;font-size:22px;font-weight:700;line-height:1;color:${isPos ? '#059669' : '#dc2626'};">${isPos ? '+' : ''}${totalScore}</div>
+        <div style="font-size:10px;color:#9c988c;margin-top:3px;">${grade.label} 级匹配</div>
+      </div>
+    </div>
+    ${sectionHTML(negItems, 'negative', '消极')}
+    ${sectionHTML(posItems, 'positive', '积极')}
+  `;
+</script>
+</body>
+</html>

@@ -55,12 +55,32 @@ export interface TodayStatistics {
   total: number;
 }
 
+// BOSS API 导出记录
+export interface BossApiRecord {
+  id: string;
+  jobTitle: string;
+  companyName: string;
+  status: string;
+  message: string;
+  timestamp: string;
+  browser: string;
+}
+
 // 插件原始数据
 export interface ExtensionRawData {
   'pipeline-cache'?: PipelineCache;
   'web-geek-job-Statistics'?: DailyStatistics[];
   'web-geek-job-Today'?: TodayStatistics;
   'web-geek-job-FormData'?: Record<string, unknown>;
+  'ai-scoring-logs'?: AiScoringLog[];
+  'boss-api-records'?: BossApiRecord[];
+  // 增量数据（watch 模式）
+  _delta?: {
+    'pipeline-cache'?: PipelineCache;
+    'ai-scoring-logs'?: AiScoringLog[];
+    recordCount?: number;
+    aiScoringCount?: number;
+  };
   [key: string]: unknown;
 }
 
@@ -99,6 +119,10 @@ export interface DeliveryLog {
   deductions?: Deduction[];
   // AI 评分详细日志
   aiScoring?: AiScoringLog;
+  // 数据来源标识
+  dataSource?: 'pipeline' | 'web' | 'mock';
+  // 过滤原因（从 pipeline processorType 推导，更可靠）
+  filterStateName: string;
 }
 
 // AI 评分详细日志（从浏览器内存中捕获）

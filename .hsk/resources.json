@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "resources": [
+    {
+      "id": "tunnel-127.0.0.1-5173",
+      "type": "tunnel",
+      "localIp": "127.0.0.1",
+      "localPort": 5173,
+      "publicUrl": "https://bb85d97f5a6b.hz-1.aicp.space?verify_code=2072",
+      "pid": 22696,
+      "binary": "hsk-cli-windows-amd64-v0.4.3.exe",
+      "detached": false,
+      "status": "running",
+      "createdAt": "2026-07-27T13:39:30.362Z",
+      "lastCheckedAt": "2026-07-27T13:39:30.362Z"
+    }
+  ]
+}
