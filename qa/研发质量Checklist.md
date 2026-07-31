@@ -12,6 +12,8 @@
 - [ ] `npm run build`（`tsc -b && vite build`）退出码 0，构建成功
 - [ ] `npm run lint` 无 error 级问题（warning 需说明）
 - [ ] 核心路径本地自测通过（至少走一遍主流程）
+- [ ] **体积红线**：`dist/index.html` 为 KB 级（禁把大数据内嵌 HTML）；主包 `index.js` < 500KB（超则代码分割 / 动态 import）〔2026-08-01 复盘沉淀，BUG-002/004〕
+- [ ] **提交门禁**：husky `pre-commit` 随仓库分发，`clone + npm install` 即自动生效（`prepare: husky`）；本地 `.git/hooks` 不作为唯一门禁〔2026-08-01 复盘沉淀，BUG-001〕
 
 > 命中 README 第四节「阻断上线标准」第 5 条即阻断。
 
@@ -39,10 +41,12 @@
 - [ ] 增量（watch 模式 `_delta`）与全量切片逻辑正确，tracker `last_analyzed_count` 与实际一致
 - [ ] 海量数据（5000+ 条）下渲染不卡死（分页 / 虚拟列表 / 懒加载）
 - [ ] 5 类投递分类（success / aiRejected / addressRejected / basicRejected / pending）统计字段与口径一致
+- [ ] **数据加载不阻塞首屏**：Electron 走 `preload` + `ipcMain` 白名单读盘（禁 nodeIntegration），dev/preview 走 XHR；一律异步流式，禁 `window.__EMBEDDED_DATA__` 式 HTML 内嵌大数据〔2026-08-01 复盘沉淀，BUG-004〕
 
 ## E. 评分体系（致命项 / 阈值）
 
-- [ ] `-5000` 致命项（大小周/单休、CET 证书、英语工作语言、实习岗、非深圳）与提示词实际值**完全一致**
+- [ ] **阈值单一事实源**：致命阈值 / 分档线 / 红线扣分统一从 `src/utils/scoringConstants.ts` 引用，禁在解析层、组件、提示词三处各写各的字面量〔2026-08-01 复盘沉淀，BUG-003〕
+- [ ] `-5000` 致命项（大小周/单休、CET 证书、英语工作语言、实习岗、非深圳）与提示词实际值**完全一致**；注意跨版本分值迭代差异属正常，同一时间段/同一批次口径一致即可
 - [ ] `scoreDistribution` 阈值随致命分变更同步（如新增 `fatal_lowerThanNeg1000` 档）
 - [ ] 评分解析 `aiScoringParser` 对「分数-920\n消极:…\n积极:…」格式健壮，异常文本不崩
 
