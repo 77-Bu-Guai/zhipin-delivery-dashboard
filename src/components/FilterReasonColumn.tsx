@@ -17,7 +17,6 @@
 import { Check, X } from 'lucide-react';
 import {
   parseScoreBreakdown,
-  getScoreGrade,
   type ScoreBreakdownItem,
 } from '@/utils/aiScoringParser';
 
@@ -59,19 +58,14 @@ export function ScoreBar({ message, fallback }: ScoreBarProps) {
       <span className="text-xs text-warm-400 italic">—</span>
     );
   }
-  const grade = getScoreGrade(data.totalScore);
   const isPos = data.totalScore >= 0;
   return (
-    <div className="flex items-center gap-1 px-1.5 py-1 bg-warm-50 rounded-md border border-warm-200 min-w-0">
-      <span className={`inline-flex items-center justify-center w-5 h-5 rounded ${grade.bgClass} ${grade.textClass} text-2xs font-display font-bold flex-shrink-0`}>
-        {grade.label}
-      </span>
-      <span className="text-2xs text-warm-500 font-medium truncate">AI 评分</span>
+    <div className="flex items-center min-w-0">
       <span
-        className={`ml-auto font-display text-sm tabular-nums font-semibold leading-none flex-shrink-0 ${
+        className={`font-display text-sm tabular-nums font-semibold leading-none flex-shrink-0 ${
           isPos ? 'text-emerald-600' : 'text-red-600'
         }`}
-        title="投递状态"
+        title="AI 评分"
       >
         {isPos ? '+' : ''}
         {data.totalScore}
@@ -89,7 +83,7 @@ interface NegativeListProps {
   maxItems?: number;
 }
 
-export function NegativeList({ message, maxItems = 3 }: NegativeListProps) {
+export function NegativeList({ message, maxItems = 100 }: NegativeListProps) {
   const data = useParsedData(message);
   if (!data) {
     return <span className="text-xs text-warm-400 italic">—</span>;
@@ -105,36 +99,35 @@ export function NegativeList({ message, maxItems = 3 }: NegativeListProps) {
         <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-red-100 text-red-600">
           <X className="w-2 h-2" strokeWidth={3} />
         </span>
-        <span className="text-2xs font-semibold text-red-600">消极</span>
-        <span className="text-2xs text-warm-400">·{items.length}项</span>
-        <span className="ml-auto text-2xs text-red-600 tabular-nums font-semibold">
+        <span className="text-sm font-semibold text-red-600">消极</span>
+        <span className="text-xs text-warm-400">·{items.length}项</span>
+        <span className="ml-auto text-xs text-red-600 tabular-nums font-semibold">
           -{total}
         </span>
       </div>
-      <ul className="space-y-0.5 pt-0.5">
-        {items.slice(0, maxItems).map((item, i) => (
-          <li
-            key={i}
-            className="flex items-center gap-1.5 px-1 py-0.5 rounded hover:bg-red-50/50 min-w-0"
-            title={item.keyword && item.reason ? `${item.keyword} · ${item.reason}` : (item.keyword || item.reason)}
-          >
-            <div className="flex-1 min-w-0 text-2xs text-warm-700 truncate">
-              {item.keyword}
-              {item.reason && (
-                <span className="text-warm-400"> · {item.reason}</span>
-              )}
-            </div>
-            <span className="text-2xs font-mono tabular-nums text-red-600 font-semibold flex-shrink-0">
-              -{item.points}
+      <div className="flex flex-wrap gap-1 pt-0.5 min-w-0">
+        {items.slice(0, maxItems).map((item, i) => {
+          const label = item.keyword || item.reason;
+          const tip = item.keyword && item.reason
+            ? `${item.keyword} · ${item.reason}`
+            : label;
+          return (
+            <span
+              key={i}
+              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-red-50 border border-red-200 text-sm text-red-700 tabular-nums"
+              title={tip}
+            >
+              <span className="truncate max-w-[220px]">{label}</span>
+              <b className="font-semibold flex-shrink-0">-{item.points}</b>
             </span>
-          </li>
-        ))}
+          );
+        })}
         {items.length > maxItems && (
-          <li className="px-1 text-2xs text-warm-400 italic">
-            +{items.length - maxItems} 项未显示
-          </li>
+          <span className="text-xs text-warm-400 self-center italic">
+            +{items.length - maxItems}
+          </span>
         )}
-      </ul>
+      </div>
     </div>
   );
 }
@@ -148,7 +141,7 @@ interface PositiveChipsProps {
   maxItems?: number;
 }
 
-export function PositiveChips({ message, maxItems = 3 }: PositiveChipsProps) {
+export function PositiveChips({ message, maxItems = 100 }: PositiveChipsProps) {
   const data = useParsedData(message);
   if (!data) {
     return <span className="text-xs text-warm-400 italic">—</span>;
@@ -164,9 +157,9 @@ export function PositiveChips({ message, maxItems = 3 }: PositiveChipsProps) {
         <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded bg-emerald-100 text-emerald-600">
           <Check className="w-2 h-2" strokeWidth={3} />
         </span>
-        <span className="text-2xs font-semibold text-emerald-600">积极</span>
-        <span className="text-2xs text-warm-400">·{items.length}项</span>
-        <span className="ml-auto text-2xs text-emerald-600 tabular-nums font-semibold">
+        <span className="text-sm font-semibold text-emerald-600">积极</span>
+        <span className="text-xs text-warm-400">·{items.length}项</span>
+        <span className="ml-auto text-xs text-emerald-600 tabular-nums font-semibold">
           +{total}
         </span>
       </div>
@@ -179,16 +172,16 @@ export function PositiveChips({ message, maxItems = 3 }: PositiveChipsProps) {
           return (
             <span
               key={i}
-              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-2xs text-emerald-700 tabular-nums"
+              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-sm text-emerald-700 tabular-nums"
               title={tip}
             >
-              <span className="truncate max-w-[100px]">{label}</span>
+              <span className="truncate max-w-[220px]">{label}</span>
               <b className="font-semibold flex-shrink-0">+{item.points}</b>
             </span>
           );
         })}
         {items.length > maxItems && (
-          <span className="text-2xs text-warm-400 self-center italic">
+          <span className="text-xs text-warm-400 self-center italic">
             +{items.length - maxItems}
           </span>
         )}
@@ -210,7 +203,7 @@ interface FilterReasonColumnProps {
 export default function FilterReasonColumn({
   message,
   fallback,
-  maxItems = 3,
+  maxItems = 100,
 }: FilterReasonColumnProps) {
   const data = useParsedData(message);
   if (!data) {

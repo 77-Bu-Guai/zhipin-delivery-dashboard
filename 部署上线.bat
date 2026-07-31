@@ -1,28 +1,29 @@
 @echo off
-title BOSS ²¿ÊðÉÏÏß
+title BOSS ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 cd /d "%~dp0"
+set "PATH=C:\Users\86136\.workbuddy\binaries\node\versions\22.22.2;%PATH%"
 
 echo ========================================
-echo   BOSS Ö±Æ¸ - ²¿ÊðÉÏÏß
+echo   BOSS Ö±Æ¸ - ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 echo ========================================
 echo.
 
-:: Step 1: ¹¹½¨Ç°¶Ë
-echo [1/2] ¹¹½¨Ç°¶ËÏîÄ¿...
+:: Step 1: ï¿½ï¿½ï¿½ï¿½Ç°ï¿½ï¿½
+echo [1/2] ï¿½ï¿½ï¿½ï¿½Ç°ï¿½ï¿½ï¿½ï¿½Ä¿...
 call npx vite build
 if %ERRORLEVEL% NEQ 0 (
-    echo [´íÎó] ¹¹½¨Ê§°Ü£¡
+    echo [ï¿½ï¿½ï¿½ï¿½] ï¿½ï¿½ï¿½ï¿½Ê§ï¿½Ü£ï¿½
     pause
     exit /b 1
 )
-echo [Íê³É] Ç°¶Ë¹¹½¨³É¹¦
+echo [ï¿½ï¿½ï¿½] Ç°ï¿½Ë¹ï¿½ï¿½ï¿½ï¿½É¹ï¿½
 echo.
 
-:: Step 2: ´ò¿ªÔ¤ÀÀ
-echo [2/2] Æô¶¯±¾µØÔ¤ÀÀ...
+:: Step 2: ï¿½ï¿½Ô¤ï¿½ï¿½
+echo [2/2] ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô¤ï¿½ï¿½...
 echo.
-echo   Ô¤ÀÀµØÖ·£ºhttp://localhost:4173
-echo   °´ Ctrl+C Í£Ö¹
+echo   Ô¤ï¿½ï¿½ï¿½ï¿½Ö·ï¿½ï¿½http://localhost:4173
+echo   ï¿½ï¿½ Ctrl+C Í£Ö¹
 echo.
 call npx vite preview --host
 pause

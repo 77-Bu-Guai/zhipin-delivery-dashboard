@@ -6,7 +6,8 @@ import DeductionsPage from '@/pages/DeductionsPage';
 import JobCategoryPage from '@/pages/JobCategoryPage';
 import TodayPage from '@/pages/TodayPage';
 import ExportPage from '@/pages/ExportPage';
-import PromptOptimizationPage from '@/pages/PromptOptimizationPage';
+import AssistantPage from '@/pages/AssistantPage';
+import CategoryDetailPage from '@/pages/CategoryDetailPage';
 
 export default function App() {
   return (
@@ -19,8 +20,9 @@ export default function App() {
           <Route path="/deductions" element={<DeductionsPage />} />
           <Route path="/today" element={<TodayPage />} />
           <Route path="/categories" element={<JobCategoryPage />} />
+          <Route path="/category/:category" element={<CategoryDetailPage />} />
           <Route path="/export" element={<ExportPage />} />
-          <Route path="/optimize" element={<PromptOptimizationPage />} />
+          <Route path="/assistant" element={<AssistantPage />} />
         </Route>
       </Routes>
     </Router>

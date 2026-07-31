@@ -1,4 +1,4 @@
-import { DeliveryLog, BonusPoint, Deduction, AiScoringLog } from '@/types';
+import { DeliveryLog, BonusPoint, Deduction } from '@/types';
 
 const companies = [
   '字节跳动', '阿里巴巴', '腾讯', '美团', '百度', '京东', '网易', '华为',

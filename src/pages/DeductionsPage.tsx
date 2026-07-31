@@ -1,9 +1,8 @@
-import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useMemo, useEffect } from 'react';
 import { useAppStore } from '@/store/useAppStore';
-import { analyzeAllScoringLogs, ArrayCategory } from '@/utils/aiScoringParser';
+import { analyzeAllScoringLogs, ArrayCategory, loadFactorCategories } from '@/utils/aiScoringParser';
 import Pagination, { usePagination } from '@/components/Pagination';
-import { AlertTriangle, TrendingDown, TrendingUp, ChevronDown, ChevronRight, Search, Briefcase, Bug, Database } from 'lucide-react';
+import { TrendingDown, TrendingUp, Search, Database } from 'lucide-react';
 
 const chartColors = [
   '#d9704a', '#6366f1', '#059669', '#d97706',
@@ -11,36 +10,70 @@ const chartColors = [
   '#ec4899', '#475569', '#14b8a6', '#f59e0b',
 ];
 
+// 时间范围切换（与今日页一致：今日 / 本周 / 本月 / 全部）
+type TimeRange = 'today' | 'week' | 'month' | 'all';
+
+const TIME_TABS: { key: TimeRange; label: string }[] = [
+  { key: 'today', label: '今日' },
+  { key: 'week', label: '本周' },
+  { key: 'month', label: '本月' },
+  { key: 'all', label: '全部' },
+];
+
+// ts 为 AiScoringLog.time（毫秒时间戳，number）
+function isInRange(ts: number, range: TimeRange): boolean {
+  if (range === 'all') return true;
+  const logDate = new Date(ts);
+  const now = new Date();
+  if (range === 'today') {
+    return logDate.toLocaleDateString('zh-CN') === now.toLocaleDateString('zh-CN');
+  }
+  if (range === 'week') {
+    const dayOfWeek = now.getDay();
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + mondayOffset);
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+    return logDate >= monday && logDate <= sunday;
+  }
+  if (range === 'month') {
+    const thirtyDaysAgo = new Date(now);
+    thirtyDaysAgo.setDate(now.getDate() - 30);
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
+    return logDate >= thirtyDaysAgo && logDate <= now;
+  }
+  return true;
+}
+
 export default function DeductionsPage() {
-  const navigate = useNavigate();
-  const { getFilteredLogs, rawAiScoringLogs } = useAppStore();
-  const logs = getFilteredLogs();
+  const { rawAiScoringLogs } = useAppStore();
+  const [activeRange, setActiveRange] = useState<TimeRange>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [factorMaps, setFactorMaps] = useState<{ negative: Record<string, string>; positive: Record<string, string> } | null>(null);
   const negPage = usePagination(20);
   const posPage = usePagination(20);
 
-  // 以 rawAiScoringLogs 为源头做完整分析
-  const bulk = useMemo(() => analyzeAllScoringLogs(rawAiScoringLogs), [rawAiScoringLogs]);
+  // 加载 MiMo 20 大类 factor 分类映射
+  useEffect(() => {
+    let mounted = true;
+    loadFactorCategories().then((cats) => {
+      if (!mounted || !cats) return;
+      setFactorMaps({ negative: cats.negativeMap, positive: cats.positiveMap });
+    });
+    return () => { mounted = false; };
+  }, []);
 
-  // Pipeline 数据的状态分布（用于发现"投递成功无评分"这类 bug）
-  const pipelineStats = useMemo(() => {
-    const allLogs = logs;
-    const successCount = allLogs.filter(l => l.status === 'success').length;
-    const withAi = allLogs.filter(l => l.aiScoring?.message?.includes('分数')).length;
-    const successWithoutAi = allLogs.filter(l =>
-      l.status === 'success' && !l.aiScoring?.message?.includes('分数')
-    ).length;
-    const oldWithoutAi = allLogs.filter(l =>
-      !l.aiScoring?.message?.includes('分数')
-    ).length - successWithoutAi;
-    return {
-      total: allLogs.length,
-      successCount,
-      withAi,
-      successWithoutAi,
-      oldWithoutAi,
-    };
-  }, [logs]);
+  // 按时间范围过滤 AI 评分日志
+  const rangeLogs = useMemo(
+    () => rawAiScoringLogs.filter(l => isInRange(l.time, activeRange)),
+    [rawAiScoringLogs, activeRange],
+  );
+
+  // 以 rangeLogs 为源头做完整分析（优先使用 AI 20 大类聚合）
+  const bulk = useMemo(() => analyzeAllScoringLogs(rangeLogs, factorMaps), [rangeLogs, factorMaps]);
 
   // 筛选扣分项
   const filteredNeg = useMemo(() => {
@@ -72,15 +105,42 @@ export default function DeductionsPage() {
   return (
     <div className="w-full space-y-8 animate-in">
       {/* 页面标题 */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
           <h2 className="font-display text-3xl tracking-tight text-warm-900">AI 评分扣分分析</h2>
           <span className="badge badge--neutral text-2xs">实时数据源</span>
         </div>
-        <span className="text-xs text-warm-400">
-          {bulk.totalScoringLogs} 条 AI 评分 · {bulk.withScoreLogs} 条含评分文本
-        </span>
+
+        {/* 时间范围切换 */}
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-warm-400">
+            {TIME_TABS.find(t => t.key === activeRange)?.label} · {bulk.totalScoringLogs} 条评分 · {bulk.withScoreLogs} 含文本
+          </span>
+          <div className="flex rounded-lg bg-warm-50 border border-warm-200 p-0.5">
+            {TIME_TABS.map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveRange(tab.key)}
+                className={`px-3.5 py-2 rounded-md text-sm font-medium transition-all ${
+                  activeRange === tab.key
+                    ? 'bg-white text-warm-800 shadow-sm border border-warm-200/80'
+                    : 'text-warm-400 hover:text-warm-600'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
+
+      {/* 当前时间段无数据提示 */}
+      {rangeLogs.length === 0 && rawAiScoringLogs.length > 0 && (
+        <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-warm-50 border border-warm-200 text-sm text-warm-500">
+          <Search className="w-4 h-4 text-warm-400" strokeWidth={1.5} />
+          当前「{TIME_TABS.find(t => t.key === activeRange)?.label}」范围内没有 AI 评分记录，试试切换到「全部」查看历史数据。
+        </div>
+      )}
 
       {/* 数据状态总览 */}
       <section className="grid grid-cols-5 gap-4">
@@ -115,35 +175,6 @@ export default function DeductionsPage() {
         </div>
       </section>
 
-      {/* Bug 提示：投递成功但无 AI 评分 */}
-      {pipelineStats.successWithoutAi > 0 && (
-        <div className="rounded-xl bg-amber-50 border border-amber-200 p-4">
-          <div className="flex items-start gap-3">
-            <Bug className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div className="flex-1 space-y-2">
-              <div className="flex items-center gap-2">
-                <p className="text-sm font-semibold text-amber-700">
-                  检测到「投递成功但无 AI 评分」记录
-                </p>
-                <span className="badge badge--warning text-2xs">{pipelineStats.successWithoutAi} 条</span>
-              </div>
-              <div className="text-xs text-amber-700 space-y-1">
-                <p>分析数据：</p>
-                <ul className="space-y-0.5 ml-4 list-disc">
-                  <li>Pipeline 总数 <strong>{pipelineStats.total}</strong> 条</li>
-                  <li>已评分（有 AI 评分）<strong>{pipelineStats.withAi}</strong> 条</li>
-                  <li>「投递成功」且无 AI 评分 <strong>{pipelineStats.successWithoutAi}</strong> 条 <em>（这部分匹配不上 AI 评分，可能丢了数据）</em></li>
-                  <li>「旧数据」（无 AI 评分，且非投递成功）<strong>{pipelineStats.oldWithoutAi}</strong> 条</li>
-                </ul>
-                <p className="text-amber-600">
-                  原因可能是：插件没记录到对应 AI 评分，或记录被截断。
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 扣分项 / 加分项 两个面板（tab 切换） */}
       <DeductionsSection
         title="扣分项统计"
@@ -154,7 +185,6 @@ export default function DeductionsPage() {
         setSearch={setSearchTerm}
         page={negPage}
         itemType="negative"
-        navigate={navigate}
       />
 
       <DeductionsSection
@@ -166,14 +196,13 @@ export default function DeductionsPage() {
         setSearch={setSearchTerm}
         page={posPage}
         itemType="positive"
-        navigate={navigate}
       />
     </div>
   );
 }
 
 function DeductionsSection({
-  title, icon, category, filtered, search, setSearch, page, itemType, navigate,
+  title, icon, category, filtered, search, setSearch, page, itemType,
 }: {
   title: string;
   icon: React.ReactNode;
@@ -183,7 +212,6 @@ function DeductionsSection({
   setSearch: (s: string) => void;
   page: { page: number; pageSize: number; onPageChange: (p: number) => void; onPageSizeChange: (n: number) => void };
   itemType: 'negative' | 'positive';
-  navigate: ReturnType<typeof useNavigate>;
 }) {
   const [expandedSets, setExpandedSets] = useState<Set<string>>(new Set());
   const toggle = (key: string) => {
@@ -239,7 +267,7 @@ function DeductionsSection({
                           className="w-2 h-2 rounded-full flex-shrink-0"
                           style={{ backgroundColor: itemType === 'negative' ? chartColors[realIdx % chartColors.length] : '#059669' }}
                         />
-                        <span className="text-sm text-warm-700 truncate">{item.reason}</span>
+                        <span className="text-sm text-warm-700 truncate" title={item.reason}>{item.reason}</span>
                         {hasVariants && (
                           <span className="text-2xs text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded flex-shrink-0">
                             {isExpanded ? '收起' : `${item.variants.length} 种措辞`}
@@ -277,9 +305,6 @@ function DeductionsSection({
                           </div>
                         ))}
                       </div>
-                      <p className="text-2xs text-amber-600 bg-amber-50 px-2 py-1 rounded mt-2 inline-block">
-                        💡 提示词优化：在提示词中统一这个关键短语
-                      </p>
                     </div>
                   )}
                 </div>

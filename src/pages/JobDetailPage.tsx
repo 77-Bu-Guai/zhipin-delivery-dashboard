@@ -37,7 +37,19 @@ export default function JobDetailPage() {
   const backParams = new URLSearchParams();
   if (status) backParams.set('status', status);
   if (range) backParams.set('range', range);
-  const backUrl = (from === 'today' ? '/today' : '/dashboard') + (backParams.toString() ? '?' + backParams.toString() : '');
+  if (id) backParams.set('highlightId', id);
+  const categoryParam = searchParams.get('category') || '';
+  const backUrl = (
+    from === 'today' ? '/today' :
+    from === 'category-detail' ? `/category/${encodeURIComponent(categoryParam)}` :
+    from === 'categories' ? '/categories' :
+    '/dashboard'
+  ) + (backParams.toString() ? '?' + backParams.toString() : '');
+
+  // 返回列表页并带上 highlightId，让列表自动滚动到并高亮原行
+  const handleBack = () => {
+    navigate(backUrl, { replace: true });
+  };
 
   const aiScore = log?.aiScoring?.message ? parseAiScoreMessage(log.aiScoring.message) : null;
   const aiDisplay = log?.aiScoring?.message ? parseAiScoreForDisplay(log.aiScoring.message) : null;
@@ -58,7 +70,7 @@ export default function JobDetailPage() {
         <h2 className="text-lg font-semibold text-warm-700">岗位未找到</h2>
         <p className="text-sm text-warm-400">该投递记录不存在或已被删除</p>
         <button
-          onClick={() => navigate(backUrl)}
+          onClick={handleBack}
           className="btn btn--secondary"
         >
           返回列表
@@ -71,7 +83,7 @@ export default function JobDetailPage() {
     <div className="w-full space-y-6 animate-in">
       {/* 返回导航 */}
       <button
-        onClick={() => navigate(backUrl)}
+        onClick={handleBack}
         className="flex items-center gap-2 text-warm-400 hover:text-warm-700 transition-colors text-sm group"
       >
         <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
@@ -94,7 +106,7 @@ export default function JobDetailPage() {
               </span>
               <span className="flex items-center gap-1.5">
                 <Globe className="w-4 h-4 text-warm-400" />
-                {log.browser === 'chrome' ? 'Chrome' : 'Firefox'}
+                {log.browser === 'chrome' ? 'Chrome' : '-'}
               </span>
             </div>
           </div>

@@ -88,7 +88,7 @@ export interface ExtensionRawData {
 
 // 扣分项类型映射
 export const DEDUCTION_TYPE_MAP: Record<string, string> = {
-  activityFilter: '活跃度过滤',
+  activityFilter: '活跃度筛选',
   amap: '工作地址筛选',
   company: '公司黑名单',
   companySizeRange: '公司规模筛选',
@@ -121,6 +121,8 @@ export interface DeliveryLog {
   aiScoring?: AiScoringLog;
   // 数据来源标识
   dataSource?: 'pipeline' | 'web' | 'mock';
+  // AI 大模型岗位分类（由 scripts/classify-jobs.mjs 生成，MiMo 按岗位名分 20 大类）
+  jobCategory?: string;
   // 过滤原因（从 pipeline processorType 推导，更可靠）
   filterStateName: string;
 }

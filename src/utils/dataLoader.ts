@@ -10,28 +10,48 @@ import {
 } from '@/types';
 import { parseAiScoreMessage } from '@/utils/aiScoringParser';
 import { devLog } from '@/lib/utils';
+import { TIER_THRESHOLDS, TIER_LABELS } from '@/utils/scoringConstants';
+import { setAICategoryData } from '@/utils/jobCategories';
+
+/** 插件增量数据 _delta 字段的结构（仅取用到的部分） */
+type ExtensionDelta = {
+  'pipeline-cache'?: { data?: Record<string, unknown> };
+  'ai-scoring-logs'?: AiScoringLog[];
+};
+
+// AI 岗位分类映射（由 scripts/classify-jobs.mjs 生成，MiMo 20 大类）
+let jobCategoryMap: Record<string, string> = {};
 
 /**
- * 加载导出的插件数据。
- * 生产环境优先使用构建时嵌入的 window.__EMBEDDED_DATA__（vite embed-data 插件注入），
- * 开发环境通过 XHR 请求 vite middleware（每次都读最新文件，Cache-Control: no-cache）。
+ * 加载导出的插件数据（流式异步，首屏不再内嵌 10.9MB 数据）。
+ * 优先级：① Electron 打包环境走 IPC 读盘（file:// 下 fetch 本地 JSON 被 Chrome CORS 拦截，由 preload.cjs + ipcMain 桥接）；
+ *        ② vite dev / vite preview / 普通浏览器走 XHR 实时请求（serve-json-files 中间件每次读最新文件）。
  * 包含重试机制，应对文件被并发写入时的读取冲突。
  */
-export async function loadExtensionData(): Promise<ExtensionRawData | null> {
-  // 生产环境：构建时嵌入的数据（vite.config.ts embed-data 插件注入到 HTML）
-  const embedded = (window as any).__EMBEDDED_DATA__;
-  if (embedded) {
-    const data = embedded as ExtensionRawData;
-    devLog.log('📦 使用嵌入数据，_meta:', data['_meta'] || data._meta);
-    devLog.log('📦 pipeline-cache 存在:', 'pipeline-cache' in data);
-    return data;
+/** 加载 MiMo 岗位分类映射（public/job-categories.json） */
+async function loadJobCategories(): Promise<void> {
+  try {
+    const raw = await fetchJsonXHR('/job-categories.json');
+    if (raw && (raw as { map?: Record<string, string> }).map) {
+      const data = raw as { categories: { name: string; color: string }[]; map: Record<string, string> };
+      jobCategoryMap = data.map || {};
+      setAICategoryData({ categories: data.categories, map: jobCategoryMap });
+      devLog.log(`🏷️ 加载岗位分类映射 ${Object.keys(jobCategoryMap).length} 条`);
+    }
+  } catch (err) {
+    devLog.warn('岗位分类映射加载失败，回退关键词规则:', (err as Error).message);
   }
+}
 
-  // 开发环境：XHR 请求 vite middleware
+export async function loadExtensionData(): Promise<ExtensionRawData | null> {
+  // 加载 AI 岗位分类映射（失败不影响主数据流，回退关键词规则）
+  await loadJobCategories();
+
+  // 流式加载：shell 先渲染，数据到位后填充（首屏 HTML 不再内嵌 10.9MB 数据）
   const MAX_RETRIES = 3;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const raw = await fetchJsonXHR('/extension-data.json');
+      const raw = await fetchExtensionData();
       if (!raw) {
         devLog.warn('extension-data.json 未找到，请先运行 npm run export-data');
         return null;
@@ -50,6 +70,29 @@ export async function loadExtensionData(): Promise<ExtensionRawData | null> {
     }
   }
   return null;
+}
+
+/**
+ * 统一数据获取入口：
+ * - Electron 打包环境（window.electronAPI 存在）→ 主进程从磁盘读文件经 IPC 回传（绕过 file:// 的 fetch 限制）；
+ * - 其余（vite dev / vite preview / 普通浏览器）→ XHR 实时请求。
+ */
+async function fetchExtensionData(): Promise<unknown> {
+  const api = (window as unknown as {
+    electronAPI?: { readDataFile?: (p: string) => Promise<unknown> };
+  }).electronAPI;
+  if (api?.readDataFile) {
+    try {
+      const text = (await api.readDataFile('extension-data.json')) as string | null;
+      if (text) {
+        devLog.log('📦 使用 Electron IPC 读盘数据');
+        return JSON.parse(text);
+      }
+    } catch (e) {
+      devLog.warn('Electron IPC 读盘失败，回退 XHR:', (e as Error).message);
+    }
+  }
+  return fetchJsonXHR('/extension-data.json');
 }
 
 /** 用 XMLHttpRequest 加载 JSON（比 fetch 更稳定，避免 ERR_ABORTED） */
@@ -77,7 +120,7 @@ function fetchJsonXHR(url: string): Promise<unknown> {
 const PROCESSOR_LABELS: Record<string, string> = {
   aiFiltering: 'AI筛选',
   amap: '工作地址筛选',
-  activityFilter: '活跃度过滤',
+  activityFilter: '活跃度筛选',
   basic: '基础筛选',
   company: '公司筛选',
   salaryRange: '薪资筛选',
@@ -85,13 +128,45 @@ const PROCESSOR_LABELS: Record<string, string> = {
   jobTitle: '岗位标题筛选',
 };
 
-function getFilterStateName(processorType: string, status: string, message: string): string {
+function getFilterStateName(
+  processorType: string,
+  status: string,
+  message: string,
+  aiScoring?: AiScoringLog,
+): string {
   if (status === 'success') return '投递成功';
   // 优先用 processorType 映射（稳定的过滤类型）
   if (processorType && PROCESSOR_LABELS[processorType]) {
     return PROCESSOR_LABELS[processorType];
   }
-  // 没有处理器类型 或 不在映射表中 → 一律归为"系统筛选"
+
+  // 非成功记录：优先用 AI 评分日志的 state_name（与插件侧分类一致）
+  const aiStateName = aiScoring?.state_name || '';
+  if (aiStateName && aiStateName !== '投递成功') {
+    // 统一命名：活跃度过滤 → 活跃度筛选
+    return aiStateName === '活跃度过滤' ? '活跃度筛选' : aiStateName;
+  }
+
+  // 无有效 state_name 时，从 message 兜底识别
+  const msg = (message || '').trim();
+  if (msg.startsWith('不活跃') || msg.includes('无活跃内容')) return '活跃度筛选';
+  if (msg.includes('直线距离超标')) return '工作地址筛选';
+  if (msg.includes('猎头过滤')) return '猎头过滤';
+  if (msg.includes('不匹配的薪资范围')) return '薪资筛选';
+  if (msg.includes('您今天已与') || msg.includes('150位BOSS')) return '达到限制';
+  if (msg.startsWith('分数')) return 'AI筛选';
+  if (
+    msg.startsWith('错误:') ||
+    msg.includes('Failed to fetch') ||
+    msg.includes('timed out') ||
+    msg.includes('预期外') ||
+    msg.includes('状态码: 429') ||
+    msg.includes('Request was rejected due to rate limiting') ||
+    msg === '用户中止'
+  ) {
+    return '未知错误';
+  }
+  // 无法识别 → 一律归为"系统筛选"
   // 不暴露 pipeline message 原始内容（避免几十个细碎分类）
   return '系统筛选';
 }
@@ -102,11 +177,13 @@ export function parsePipelineToLogs(data: ExtensionRawData): DeliveryLog[] {
   if (!pipeline?.data) return [];
 
   const aiScoringLogs = getAiScoringLogs(data);
-  // 只按 encryptJobId 精确匹配（不再用公司+岗位名回退）
+  // 只按 encryptJobId 精确匹配；同一 ID 取时间最新的评分记录
   const scoringByJobId: Record<string, AiScoringLog> = {};
   if (aiScoringLogs) {
     for (const log of aiScoringLogs) {
-      if (log.encryptJobId) {
+      if (!log.encryptJobId) continue;
+      const existing = scoringByJobId[log.encryptJobId];
+      if (!existing || (log.time || 0) > (existing.time || 0)) {
         scoringByJobId[log.encryptJobId] = log;
       }
     }
@@ -134,10 +211,31 @@ export function parsePipelineToLogs(data: ExtensionRawData): DeliveryLog[] {
       : undefined;
 
     // 只按 encryptJobId 精确匹配 AI 评分
-    const aiScoring = scoringByJobId[record.encryptJobId] || undefined;
+    let aiScoring = scoringByJobId[record.encryptJobId] || undefined;
+
+    // 兼容 Firefox / 旧版插件：pipeline.message 里直接带有评分文本时，
+    // 构造一个临时的 aiScoring 对象供 UI 解析，避免显示 "--"
+    const recordMessageHasScore =
+      record.message && /^分数[：:]?\s*(-?\d+|NaN)/.test(record.message);
+    if (!aiScoring && recordMessageHasScore) {
+      aiScoring = {
+        time: record.createdAt,
+        encryptJobId: record.encryptJobId,
+        jobName: record.jobName,
+        companyName: record.brandName,
+        state: record.status === 'success' ? 'success' : 'warning',
+        state_name: 'AI筛选',
+        message: record.message,
+        errMsg: '',
+        errState: '',
+      };
+    }
 
     // 只有 AI 过滤的记录才用 AI 评分重分类（地址/活跃度/薪资过滤不受 AI 影响）
-    if (aiScoring && record.processorType === 'aiFiltering') {
+    // 也兼容 Chrome 旧数据：processorType 为空但 message 是评分文本
+    const isAiScoringRecord =
+      record.processorType === 'aiFiltering' || recordMessageHasScore;
+    if (aiScoring && isAiScoringRecord) {
       const scoreText = aiScoring.message || aiScoring.errMsg || '';
       const scoreMatch = scoreText.match(/分数[：:]?\s*(-?\d+)/);
       if (scoreMatch) {
@@ -148,8 +246,13 @@ export function parsePipelineToLogs(data: ExtensionRawData): DeliveryLog[] {
       }
     }
 
-    // 过滤原因：用 pipeline 的 processorType，不用 aiScoring.state_name
-    const filterStateName = getFilterStateName(record.processorType, status, record.message);
+    // 过滤原因：processorType → AI 评分 state_name → message 兜底
+    const filterStateName = getFilterStateName(
+      record.processorType,
+      status,
+      record.message,
+      aiScoring,
+    );
 
     return {
       id: record.encryptJobId,
@@ -166,6 +269,7 @@ export function parsePipelineToLogs(data: ExtensionRawData): DeliveryLog[] {
       aiScoring,
       dataSource: 'pipeline',
       filterStateName,
+      jobCategory: jobCategoryMap[record.jobName] || undefined,
     };
   });
 }
@@ -303,23 +407,33 @@ export function getTodayStats(data: ExtensionRawData) {
   return data['web-geek-job-Today'] || null;
 }
 
-/** 获取 AI 评分详细日志（合并主区和 _delta 区） */
+/** 获取 AI 评分详细日志（合并主区和 _delta 区）
+ *  同一 encryptJobId 可能有多条记录（重试/重复投递/402 失败后重跑），保留时间最新的一条。
+ */
 export function getAiScoringLogs(data: ExtensionRawData): AiScoringLog[] | null {
   const main = (data['ai-scoring-logs'] as AiScoringLog[]) || [];
   const delta = data._delta?.['ai-scoring-logs'] as AiScoringLog[] | undefined;
-  if (!delta || delta.length === 0) return main.length > 0 ? main : null;
-  if (main.length === 0) return delta;
 
-  // 合并去重（按 encryptJobId）
-  const seen = new Set(main.map(r => r.encryptJobId));
-  const merged = [...main];
-  for (const log of delta) {
-    if (!seen.has(log.encryptJobId)) {
-      merged.push(log);
-      seen.add(log.encryptJobId);
+  // 无论 delta 是否存在，都对合并后的结果按 encryptJobId 去重，保留时间最新的一条
+  const map = new Map<string, AiScoringLog>();
+  for (const log of main) {
+    if (!log.encryptJobId) continue;
+    const existing = map.get(log.encryptJobId);
+    if (!existing || (log.time || 0) > (existing.time || 0)) {
+      map.set(log.encryptJobId, log);
     }
   }
-  return merged;
+  if (delta) {
+    for (const log of delta) {
+      if (!log.encryptJobId) continue;
+      const existing = map.get(log.encryptJobId);
+      if (!existing || (log.time || 0) > (existing.time || 0)) {
+        map.set(log.encryptJobId, log);
+      }
+    }
+  }
+  const merged = Array.from(map.values());
+  return merged.length > 0 ? merged : null;
 }
 
 /**
@@ -339,9 +453,10 @@ export async function loadExtensionDelta(): Promise<{
         devLog.warn('extension-delta.json 不存在，回退到全量读取');
         return fallbackDeltaFromFull();
       }
-      const d = data as { _delta?: any; _meta?: any };
+      const d = data as { _delta?: ExtensionDelta; _meta?: unknown };
       const delta = d._delta;
-      if (!delta || !delta['pipeline-cache']?.data || Object.keys(delta['pipeline-cache'].data).length === 0) {
+      const pipelineCache = delta?.['pipeline-cache'];
+      if (!delta || !pipelineCache?.data || Object.keys(pipelineCache.data).length === 0) {
         return { newLogs: [], newAiScoring: [] };
       }
 
@@ -372,9 +487,10 @@ async function fallbackDeltaFromFull(): Promise<{
   try {
     const data = await fetchJsonXHR('/extension-data.json');
     if (!data) return null;
-    const d = data as { _delta?: any };
+    const d = data as { _delta?: ExtensionDelta };
     const delta = d._delta;
-    if (!delta || !delta['pipeline-cache']?.data || Object.keys(delta['pipeline-cache'].data).length === 0) {
+    const pipelineCache = delta?.['pipeline-cache'];
+    if (!delta || !pipelineCache?.data || Object.keys(pipelineCache.data).length === 0) {
       return { newLogs: [], newAiScoring: [] };
     }
     const newPipeline: Record<string, unknown> = { 'pipeline-cache': delta['pipeline-cache'] };
@@ -594,24 +710,14 @@ export interface TierBucket {
   affectedLogIds: string[];
 }
 
-/** Tier boundaries:
- * 致命 ≥1000 | 重要 300-999 | 普通 100-299 | 轻微 50-99 | 微不足道 <50 | 加分正分
- */
+/** 分档阈值统一收敛到 scoringConstants.ts 的 TIER_THRESHOLDS（致命 ≥ FATAL_DEDUCTION_THRESHOLD，见该文件注释）。 */
 function getScoreTier(score: number): TierBucket['tier'] {
-  if (score >= 1000) return 'fatal';
-  if (score >= 300) return 'major';
-  if (score >= 100) return 'minor';
-  if (score >= 50) return 'minor-minus';
+  if (score >= TIER_THRESHOLDS.fatal) return 'fatal';
+  if (score >= TIER_THRESHOLDS.major) return 'major';
+  if (score >= TIER_THRESHOLDS.minor) return 'minor';
+  if (score >= TIER_THRESHOLDS.minorMinus) return 'minor-minus';
   return 'trivial';
 }
-
-const TIER_LABELS: Record<TierBucket['tier'], string> = {
-  'fatal': '致命扣分 (≥1000分)',
-  'major': '重要扣分 (300-999分)',
-  'minor': '普通扣分 (100-299分)',
-  'minor-minus': '轻微扣分 (50-99分)',
-  'trivial': '轻微扣分 (<50分)',
-};
 
 /**
  * 按分数等级分组所有扣分项（不依赖任何关键词）

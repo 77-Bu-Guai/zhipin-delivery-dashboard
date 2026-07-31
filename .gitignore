@@ -29,6 +29,35 @@ dist-ssr
 .deduction-cache.json
 .export-cache.json
 
+# Data storage
+data/
+public/snapshots/
+
+# Environment / secrets — 绝不提交密钥
+.env
+.env.*
+!.env.example
+# 前端「AI 接口配置」面板落盘的配置（含 API Key，绝不提交）
+.ai-config.json
+
 # Internal tool directories
 .workbuddy/
 .playwright-cli/
+
+# Runtime state / cache / locks（脚本运行产物，不入库）
+.classification-state.json
+.factor-cache.json
+.factor-classification-state.json
+.factor-classify-lock
+.job-category-cache.json
+scripts/.analyze_tracker.json
+scripts/analysis_result.json
+
+# 个人数据 / 简历提取（含隐私，绝不提交）
+.resume_extract.txt
+
+# 分析报告 / 临时产物（可由脚本再生成，不入库）
+*.xlsx
+scripts/*.html
+/_categories.png
+/_today_top.png

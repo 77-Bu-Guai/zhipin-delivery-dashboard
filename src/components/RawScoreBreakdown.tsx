@@ -10,7 +10,7 @@
  *   · 关键词更深（实色填充），原因更浅（描边），建立视觉层级
  */
 
-import { Check, X, ChevronDown } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import { parseScoreBreakdown, getScoreGrade, type ScoreBreakdownItem } from '@/utils/aiScoringParser';
 
 interface RawScoreBreakdownProps {

@@ -1,6 +1,7 @@
 @echo off
 title BOSS-数据导出
 cd /d "E:\Vibe Coding\boss"
+set "PATH=C:\Users\86136\.workbuddy\binaries\node\versions\22.22.2;%PATH%"
 :loop
 node scripts/export-logs.cjs --watch --compact
 echo.

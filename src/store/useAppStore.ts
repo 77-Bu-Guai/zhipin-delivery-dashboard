@@ -3,8 +3,6 @@ import { DeliveryLog, DeductionStat, FilterOptions, DailyStatistics, AiScoringLo
 import { loadExtensionData, parsePipelineToLogs, parseStatisticsToDeductions, getDataSources, getDailyStats, getTodayStats, getAiScoringLogs, parseAiDeductionsFromLogs, buildCategoriesFromMap } from '@/utils/dataLoader';
 import { devLog } from '@/lib/utils';
 
-export type BrowserFilter = 'all' | 'chrome' | 'firefox';
-
 interface AppState {
   logs: DeliveryLog[];
   deductionStats: DeductionStat[];
@@ -20,14 +18,12 @@ interface AppState {
   lastUpdated: Date | null;
   lastFullReload: Date | null;
   autoRefreshInterval: number | null;
-  browserFilter: BrowserFilter;
 
   // Actions
   loadLogs: (browser: 'chrome' | 'firefox') => Promise<void>;
   refreshData: () => Promise<void>;
   clearLogs: () => void;
   setFilterOptions: (options: Partial<FilterOptions>) => void;
-  setBrowserFilter: (filter: BrowserFilter) => void;
 
   // Computed
   getFilteredLogs: () => DeliveryLog[];
@@ -58,7 +54,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastUpdated: null,
   lastFullReload: null,
   autoRefreshInterval: null,
-  browserFilter: 'all',
 
   loadLogs: async (browser: 'chrome' | 'firefox') => {
     set({ isLoading: true, selectedBrowser: browser });
@@ -94,7 +89,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       logs: [], deductionStats: [], dailyStats: [], todayStats: null, selectedBrowser: null,
       filterOptions: { browser: null, dateRange: null }, dataSources: { chrome: false, firefox: false },
-      hasRealData: false, lastUpdated: null, lastFullReload: null, browserFilter: 'all',
+      hasRealData: false, lastUpdated: null, lastFullReload: null,
     });
   },
 
@@ -102,25 +97,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state) => ({ filterOptions: { ...state.filterOptions, ...options } }));
   },
 
-  setBrowserFilter: (filter) => {
-    set({ browserFilter: filter });
-  },
-
   /** 基础筛选：仅按浏览器过滤，不含日期范围 */
   getLogsByBrowser: () => {
-    const { logs, browserFilter } = get();
-    if (browserFilter === 'all') return logs;
-    return logs.filter((l) => l.browser === browserFilter);
+    return get().logs;
   },
 
   getFilteredLogs: () => {
-    const { logs, filterOptions, browserFilter } = get();
+    const { logs, filterOptions } = get();
     let filtered = [...logs];
-
-    // 浏览器筛选
-    if (browserFilter !== 'all') {
-      filtered = filtered.filter((l) => l.browser === browserFilter);
-    }
 
     // 日期范围筛选
     if (filterOptions.dateRange) {
@@ -213,13 +197,13 @@ async function loadFullData(set: (partial: Partial<AppState>) => void, isFullRel
       const rawAiScoringLogs = rawAiRaw || [];
 
       // AI 合并分类（来自 classifyAndMerge → _mergedCategories）
-      const mergedCats = (rawData as any)._mergedCategories;
+      const mergedCats = (rawData as unknown as { _mergedCategories?: Record<string, string | { mergedKey: string; label: string }> })._mergedCategories;
       const deductionCategories = mergedCats
         ? buildCategoriesFromMap(mergedCats, logs)
         : parseAiDeductionsFromLogs(logs);
 
       if (mergedCats) {
-        const uniqueKeys = new Set(Object.values(mergedCats).map((v: any) => v.mergedKey));
+        const uniqueKeys = new Set(Object.values(mergedCats).map((v) => (typeof v === 'string' ? v : v.mergedKey)));
         devLog.log(`🤖 AI 合并分类: ${Object.keys(mergedCats).length} 种原因 → ${uniqueKeys.size} 个类别`);
       }
 

@@ -1,12 +1,12 @@
 import { useState, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/store/useAppStore';
+import { classifyJob } from '@/utils/jobCategories';
+import { parseAiScoreForDisplay } from '@/utils/aiScoringParser';
 import {
   FileDown, Calendar, Download, Filter, RefreshCw, TrendingUp,
-  CheckCircle2, ShieldX, Clock, Sparkles,
+  CheckCircle2, ShieldX, Clock, Sparkles, FileSpreadsheet,
 } from 'lucide-react';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 import Pagination, { usePagination } from '@/components/Pagination';
 
 /* ============================================================
@@ -40,9 +40,16 @@ const STATUS_META: Record<string, {
 };
 
 const BROWSER_META: Record<string, { label: string; icon: string }> = {
-  chrome:  { label: 'Chrome',  icon: '🟢' },
-  firefox: { label: 'Firefox', icon: '🟠' },
+  chrome: { label: 'Chrome', icon: '🟢' },
 };
+
+/** 状态列文字与今日投递页对齐：优先使用 filterStateName */
+function getStatusMeta(log: { status?: string; filterStateName?: string }) {
+  const status = (log.status ?? '') as keyof typeof STATUS_META;
+  const base = STATUS_META[status] || STATUS_META.pending;
+  const label = log.filterStateName || (log.status === 'success' ? '投递成功' : '系统筛选');
+  return { ...base, label };
+}
 
 /* ============================================================
    快捷日期范围
@@ -125,7 +132,7 @@ export default function ExportPage() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [quickRange, setQuickRange] = useState<QuickRange>('all');
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [isGenerating] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
   const pagination = usePagination(20);
 
@@ -143,6 +150,14 @@ export default function ExportPage() {
     const pending  = filteredLogs.filter(l => l.status === 'pending').length;
     return { total: filteredLogs.length, success, screened, failed, pending };
   }, [filteredLogs]);
+
+  /* PDF 表格单元格样式（离屏报告用，inline 保证 html2canvas 正确渲染） */
+  const thStyle: React.CSSProperties = {
+    padding: '10px 12px', textAlign: 'left', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap',
+  };
+  const tdStyle: React.CSSProperties = {
+    padding: '9px 12px', textAlign: 'left', color: '#374151', whiteSpace: 'nowrap',
+  };
 
   /* ---------- 筛选 ---------- */
   const handleApplyFilter = () => {
@@ -164,6 +179,49 @@ export default function ExportPage() {
     setFilterOptions({ dateRange: null });
   };
 
+  /* ---------- 导出 Excel ---------- */
+  async function exportExcel(logs: typeof filteredLogs) {
+    const XLSX = await import('xlsx');
+    const headers = ['序号', '岗位分类', '岗位名称', '公司名字', '筛选结果', '筛选原因', 'AI评分', '积极因素', '消极因素', '浏览器', '投递时间'];
+    const rows = logs.map((log, idx) => {
+      const { category } = classifyJob(log.jobTitle);
+      const stateLabel = log.filterStateName || (log.status === 'success' ? '投递成功' : '系统筛选');
+      const reason = log.status === 'success' ? (log.message || '投递成功') : (log.filterStateName || log.message || '未知原因');
+      const browserLabel = log.browser === 'chrome' ? 'Chrome' : '-';
+      const time = new Date(log.timestamp).toLocaleString('zh-CN');
+      const aiDisplay = log.aiScoring?.message ? parseAiScoreForDisplay(log.aiScoring.message) : null;
+      const aiScore = aiDisplay ? `${aiDisplay.totalScore >= 0 ? '+' : ''}${aiDisplay.totalScore}` : '-';
+      const positives = aiDisplay ? aiDisplay.positives.map(p => `${p.reason}(+${p.points})`).join('；') : '';
+      const negatives = aiDisplay ? aiDisplay.deductions.map(d => `${d.reason}(-${d.points})`).join('；') : '';
+      return [idx + 1, category, log.jobTitle, log.companyName, stateLabel, reason, aiScore, positives, negatives, browserLabel, time];
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws['!cols'] = [
+      { wch: 8 },  // 序号
+      { wch: 10 }, // 岗位分类
+      { wch: 28 }, // 岗位名称
+      { wch: 20 }, // 公司名字
+      { wch: 12 }, // 筛选结果
+      { wch: 36 }, // 筛选原因
+      { wch: 10 }, // AI评分
+      { wch: 60 }, // 积极因素
+      { wch: 60 }, // 消极因素
+      { wch: 10 }, // 浏览器
+      { wch: 20 }, // 投递时间
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '投递记录');
+    const dateStr = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `${dateStr}投递导出报告.xlsx`);
+  }
+
+  const handleExportExcel = () => {
+    if (filteredLogs.length === 0) return;
+    exportExcel(filteredLogs);
+  };
+
   const handleQuickRange = (range: QuickRange) => {
     setQuickRange(range);
     const r = getQuickRange(range);
@@ -183,40 +241,16 @@ export default function ExportPage() {
     }
   };
 
-  /* ---------- 导出 PDF ---------- */
-  const handleExportPDF = async () => {
-    if (!exportRef.current || filteredLogs.length === 0) return;
-    setIsGenerating(true);
-    try {
-      const canvas = await html2canvas(exportRef.current, {
-        backgroundColor: '#faf9f6',
-        scale: 2,
-        useCORS: true,
-      });
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = pageWidth - 20;
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-      let heightLeft = imgHeight;
-      let position = 10;
-      pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight - 20;
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight + 10;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight - 20;
-      }
-      const dateStr = new Date().toISOString().slice(0, 10);
-      pdf.save(`Boss投递报告_${dateStr}.pdf`);
-    } catch (error) {
-      console.error('PDF 生成失败:', error);
-    } finally {
-      setIsGenerating(false);
-    }
+  /* ---------- 导出 PDF（调用浏览器原生打印，中文可靠、文字可选中） ---------- */
+  const handleExportPDF = () => {
+    if (filteredLogs.length === 0) return;
+    const prevTitle = document.title;
+    const dateStr = new Date().toISOString().slice(0, 10);
+    // 设置页面标题为文件名，这样“另存为 PDF”时默认文件名就是它
+    document.title = `${dateStr}投递导出报告`;
+    window.print();
+    // 打印对话框关闭后恢复标题
+    setTimeout(() => { document.title = prevTitle; }, 500);
   };
 
   /* ---------- 空数据 ---------- */
@@ -311,6 +345,27 @@ export default function ExportPage() {
             <RefreshCw className="w-3.5 h-3.5" />
             清除
           </button>
+          <div className="w-px h-8 bg-warm-200 mx-1" />
+          <button
+            onClick={handleExportExcel}
+            disabled={filteredLogs.length === 0}
+            className="btn btn--secondary"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            导出 Excel
+          </button>
+          <button
+            onClick={handleExportPDF}
+            disabled={isGenerating || filteredLogs.length === 0}
+            className="btn btn--primary"
+          >
+            {isGenerating ? (
+              <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : (
+              <Download className="w-3.5 h-3.5" />
+            )}
+            导出 PDF
+          </button>
         </div>
 
         {/* 当前筛选提示 */}
@@ -367,7 +422,7 @@ export default function ExportPage() {
 
       {/* ================== 报告预览 ================== */}
       <section className="card overflow-hidden animate-in animate-in--delay-5">
-        <div ref={exportRef} style={{ backgroundColor: '#ffffff' }}>
+        <div ref={exportRef}>
           {/* 报告头部 */}
           <header className="p-6 border-b border-warm-100 flex items-center justify-between">
             <div>
@@ -472,8 +527,8 @@ export default function ExportPage() {
                   </tr>
                 ) : (
                   pagedLogs.map((log, index) => {
-                    const meta = STATUS_META[log.status] || STATUS_META.pending;
-                    const browser = BROWSER_META[log.browser || ''] || { label: '浏览器', icon: '•' };
+                    const meta = getStatusMeta(log);
+                    const browser = BROWSER_META[log.browser || ''] || { label: '-', icon: '' };
                     const seq = (pagination.page - 1) * pagination.pageSize + index + 1;
                     return (
                       <tr key={log.id} className="table-row">
@@ -526,29 +581,129 @@ export default function ExportPage() {
         )}
       </section>
 
-      {/* ================== 下载按钮 ================== */}
-      <div className="flex justify-center pt-2 animate-in animate-in--delay-5">
-        <button
-          onClick={handleExportPDF}
-          disabled={isGenerating || filteredLogs.length === 0}
-          className="group relative flex items-center gap-3 px-8 py-3.5 rounded-2xl bg-accent-500 text-white font-semibold text-sm hover:bg-accent-600 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-300 shadow-sm hover:shadow-glow active:scale-[0.98]"
+      {/* ============ 打印专用完整报告（浏览器原生打印：中文可靠、文字可选中） ============ */}
+      <style>{`
+        @media print {
+          html, body { background: #ffffff !important; }
+          body * { visibility: hidden !important; }
+          #pdf-print-area, #pdf-print-area * { visibility: visible !important; }
+          #pdf-print-area {
+            position: absolute !important; left: 0 !important; top: 0 !important;
+            width: 100% !important; padding: 0 !important; margin: 0 !important;
+          }
+          #pdf-print-area table { width: 100% !important; }
+          #pdf-print-area thead { display: table-header-group !important; }
+          #pdf-print-area tr { break-inside: avoid !important; }
+          @page { size: A4; margin: 12mm; }
+        }
+        .pdf-print-area {
+          position: absolute; left: -9999px; top: 0; width: 794px;
+        }
+      `}</style>
+
+      <div
+        id="pdf-print-area"
+        className="pdf-print-area"
+        aria-hidden
+        style={{
+          background: '#ffffff',
+          color: '#1f2937',
+          fontFamily:
+            '-apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif',
+          padding: '32px 36px',
+          boxSizing: 'border-box',
+        }}
+      >
+        {/* 标题 */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-end',
+            borderBottom: '2px solid #d9704a',
+            paddingBottom: 16,
+          }}
         >
-          {isGenerating ? (
-            <>
-              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              正在生成 PDF...
-            </>
-          ) : (
-            <>
-              <Download className="w-4 h-4 group-hover:animate-bounce" strokeWidth={2.25} />
-              下载 PDF 报告
-              <span className="text-2xs opacity-80 font-mono font-normal pl-1">
-                ({stats.total.toLocaleString()} 条)
-              </span>
-            </>
-          )}
-        </button>
+          <div>
+            <h1 style={{ fontSize: 24, fontWeight: 700, color: '#1f2937', margin: 0 }}>
+              Boss 直聘投递报告
+            </h1>
+            <p style={{ fontSize: 12, color: '#6b7280', margin: '8px 0 0' }}>
+              生成时间：{new Date().toLocaleString('zh-CN', { hour12: false })}
+              {filterOptions.dateRange &&
+                ` 筛选：${new Date(filterOptions.dateRange[0]).toLocaleDateString('zh-CN')} - ${new Date(filterOptions.dateRange[1]).toLocaleDateString('zh-CN')}`}
+            </p>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 32, fontWeight: 700, color: '#d9704a', lineHeight: 1 }}>
+              {stats.total}
+            </div>
+            <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>投递记录</div>
+          </div>
+        </div>
+
+        {/* 汇总小卡 */}
+        <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
+          {[
+            { label: '投递成功', value: stats.success, color: '#10b981' },
+            { label: '系统筛选', value: stats.screened, color: '#f59e0b' },
+            { label: 'AI 评分<20', value: stats.failed, color: '#ef4444' },
+            { label: '待处理', value: stats.pending, color: '#b45309' },
+          ].map((s) => (
+            <div
+              key={s.label}
+              style={{
+                flex: 1,
+                border: '1px solid #f1f1f1',
+                borderRadius: 10,
+                padding: '12px 14px',
+                background: '#fafafa',
+              }}
+            >
+              <div style={{ fontSize: 12, color: '#6b7280' }}>{s.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: s.color, marginTop: 4 }}>
+                {s.value}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* 完整表格 */}
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 20, fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: '#d9704a', color: '#fff' }}>
+              <th style={thStyle}>序号</th>
+              <th style={thStyle}>投递时间</th>
+              <th style={thStyle}>公司名称</th>
+              <th style={thStyle}>岗位名称</th>
+              <th style={thStyle}>状态</th>
+              <th style={thStyle}>浏览器</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredLogs.map((log, idx) => {
+              const meta = getStatusMeta(log);
+              const browser = BROWSER_META[log.browser || ''] || { label: '-', icon: '' };
+              return (
+                <tr
+                  key={log.id}
+                  style={{ borderBottom: '1px solid #eee', background: idx % 2 ? '#fafafa' : '#fff' }}
+                >
+                  <td style={tdStyle}>{String(idx + 1).padStart(3, '0')}</td>
+                  <td style={tdStyle}>
+                    {new Date(log.timestamp).toLocaleString('zh-CN', { hour12: false })}
+                  </td>
+                  <td style={{ ...tdStyle, fontWeight: 600, color: '#111827' }}>{log.companyName}</td>
+                  <td style={tdStyle}>{log.jobTitle}</td>
+                  <td style={tdStyle}>{meta.label}</td>
+                  <td style={tdStyle}>{browser.label}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
+
     </div>
   );
 }

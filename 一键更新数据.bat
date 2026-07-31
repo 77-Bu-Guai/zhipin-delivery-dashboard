@@ -1,22 +1,23 @@
 @echo off
-title BOSSÊý¾ÝÒ»¼üµ¼³ö
+title BOSSï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 cd /d "%~dp0"
+set "PATH=C:\Users\86136\.workbuddy\binaries\node\versions\22.22.2;%PATH%"
 
 echo ========================================
-echo   BOSSÊý¾Ý - Ò»¼üµ¼³ö
+echo   BOSSï¿½ï¿½ï¿½ï¿½ - Ò»ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 echo ========================================
 echo.
 
 where node >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    echo [´íÎó] Î´ÕÒµ½ node
+    echo [ï¿½ï¿½ï¿½ï¿½] Î´ï¿½Òµï¿½ node
     pause
     exit /b 1
 )
 
-echo ÕýÔÚ´Óä¯ÀÀÆ÷¶ÁÈ¡×îÐÂÊý¾Ý£¨º¬ AI ÆÀ·Ö£©...
+echo ï¿½ï¿½ï¿½Ú´ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ý£ï¿½ï¿½ï¿½ AI ï¿½ï¿½ï¿½Ö£ï¿½...
 echo.
 node scripts/export-logs.cjs
 echo.
-echo   °´ÈÎÒâ¼ü¹Ø±Õ
+echo   ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ø±ï¿½
 pause >nul

@@ -10,7 +10,7 @@ export default function Layout() {
   const initRef = useRef(false);
 
   // 主题
-  const { theme, toggleTheme, isDark } = useTheme();
+  const { toggleTheme, isDark } = useTheme();
 
   // 用 ref 保存最新回调，避免 visibilitychange 监听器持有过期闭包
   const refreshDataRef = useRef(refreshData);
@@ -45,8 +45,8 @@ export default function Layout() {
   return (
     <div className="min-h-screen" style={{ backgroundColor: 'var(--bg-root)' }}>
       <Sidebar isDark={isDark} toggleTheme={toggleTheme} />
-      <main className="ml-56 min-h-screen">
-        <div className="p-6">
+      <main className="ml-56 min-h-screen select-text">
+        <div className="pl-8 pr-3 py-8">
           <Outlet />
         </div>
       </main>

@@ -2,8 +2,10 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppStore } from '@/store/useAppStore';
 import { classifyJob, getAllCategories } from '@/utils/jobCategories';
+import { parseAiScoreForDisplay } from '@/utils/aiScoringParser';
 import Pagination from '@/components/Pagination';
 import { ScoreBar, NegativeList, PositiveChips } from '@/components/FilterReasonColumn';
+import { DeliveryLog } from '@/types';
 import {
   ChevronRight, RefreshCw, Zap, Download,
   CheckCircle2, XCircle, AlertTriangle, X as XIcon,
@@ -13,7 +15,7 @@ import {
 // 筛选原因 — 兼容旧逻辑，AI 评分的情况交给 FilterReasonColumn
 // ============================================================
 
-function getFallbackReason(log: any): string {
+function getFallbackReason(log: DeliveryLog): string {
   const stateName = log.filterStateName || '';
   // 活跃度过滤 — 直接用原始消息
   if (stateName.includes('活跃度') || stateName.includes('活跃')) {
@@ -69,24 +71,42 @@ function isInRange(timestamp: string, range: TimeRange): boolean {
 // 导出
 // ============================================================
 
-function exportCsv(logs: any[], label: string) {
-  const headers = ['岗位分类', '岗位名称', '公司名字', '筛选结果', '筛选原因', '浏览器', '投递时间'];
+type ExportLog = DeliveryLog & { state_name?: string };
+async function exportExcel(logs: ExportLog[], label: string) {
+  const XLSX = await import('xlsx');
+  const headers = ['岗位分类', '岗位名称', '公司名字', '筛选结果', '筛选原因', 'AI评分', '积极因素', '消极因素', '浏览器', '投递时间'];
   const rows = logs.map(log => {
-    const { category } = classifyJob(log.jobTitle);
-    const stateLabel = log.state_name || log.status || '-';
-    const reason = getFallbackReason(log);
-    const browserLabel = log.browser === 'chrome' ? 'Chrome' : log.browser === 'firefox' ? 'Firefox' : '-';
+    const category = log.jobCategory || classifyJob(log.jobTitle).category;
+    const stateLabel = log.state_name || log.filterStateName || (log.status === 'success' ? '投递成功' : '系统筛选');
+    const reason = log.status === 'success' ? (log.message || '投递成功') : getFallbackReason(log);
+    const browserLabel = log.browser === 'chrome' ? 'Chrome' : '-';
     const time = new Date(log.timestamp).toLocaleString('zh-CN');
-    return [category, log.jobTitle, log.companyName, stateLabel, reason, browserLabel, time];
+    const aiDisplay = log.aiScoring?.message ? parseAiScoreForDisplay(log.aiScoring.message) : null;
+    const aiScore = aiDisplay ? `${aiDisplay.totalScore >= 0 ? '+' : ''}${aiDisplay.totalScore}` : '-';
+    const positives = aiDisplay ? aiDisplay.positives.map(p => `${p.reason}(+${p.points})`).join('；') : '';
+    const negatives = aiDisplay ? aiDisplay.deductions.map(d => `${d.reason}(-${d.points})`).join('；') : '';
+    return [category, log.jobTitle, log.companyName, stateLabel, reason, aiScore, positives, negatives, browserLabel, time];
   });
-  const csvContent = [headers.join(','), ...rows.map(r => r.map(v => `"${v}"`).join(','))].join('\n');
-  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `BOSS投递报告_${label}_${new Date().toISOString().slice(0, 10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  ws['!cols'] = [
+    { wch: 10 }, // 岗位分类
+    { wch: 28 }, // 岗位名称
+    { wch: 20 }, // 公司名字
+    { wch: 12 }, // 筛选结果
+    { wch: 36 }, // 筛选原因
+    { wch: 10 }, // AI评分
+    { wch: 60 }, // 积极因素
+    { wch: 60 }, // 消极因素
+    { wch: 10 }, // 浏览器
+    { wch: 20 }, // 投递时间
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '投递记录');
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const safeLabel = label.replace(/[\\/:*?"<>|]/g, '-');
+  XLSX.writeFile(wb, `${dateStr}_${safeLabel}投递导出报告.xlsx`);
 }
 
 // ============================================================
@@ -99,11 +119,11 @@ export default function TodayPage() {
   const { getFilteredLogs, refreshData, isLoading, lastFullReload } = useAppStore();
   const allLogs = getFilteredLogs();
 
-  const initialRange = (searchParams.get('range') as TimeRange) || 'all';
+  const initialRange = (searchParams.get('range') as TimeRange) || 'today';
   const initialStatus = (searchParams.get('status') as StatusFilter) || 'all';
 
   const [activeRange, setActiveRange] = useState<TimeRange>(
-    ['today', 'week', 'month', 'all'].includes(initialRange) ? initialRange : 'all'
+    ['today', 'week', 'month', 'all'].includes(initialRange) ? initialRange : 'today'
   );
   const [activeStatus, setActiveStatus] = useState<StatusFilter>(
     (initialStatus && initialStatus !== 'all') ? initialStatus : 'all'
@@ -112,7 +132,10 @@ export default function TodayPage() {
   const [countdown, setCountdown] = useState(5);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [flashId, setFlashId] = useState<string | null>(null);
   const intervalRef = useRef<number | null>(null);
+
+  const highlightId = searchParams.get('highlightId');
 
   const fullReloadCountdown = useMemo(() => {
     if (!lastFullReload) return 60;
@@ -152,13 +175,28 @@ export default function TodayPage() {
     }
 
     if (activeCategory !== 'all') {
-      result = result.filter(l => classifyJob(l.jobTitle).category === activeCategory);
+      result = result.filter(l => (l.jobCategory || classifyJob(l.jobTitle).category) === activeCategory);
     }
 
     return result.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   }, [allLogs, activeRange, activeStatus, activeCategory]);
 
   useEffect(() => { setCurrentPage(1); }, [activeRange, activeStatus, activeCategory, pageSize]);
+
+  // 从详情页返回时，滚动并高亮对应行
+  useEffect(() => {
+    if (!highlightId) return;
+    const el = document.getElementById(`job-row-${highlightId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setFlashId(highlightId);
+      const timer = window.setTimeout(() => setFlashId(null), 2500);
+      const params = new URLSearchParams(searchParams);
+      params.delete('highlightId');
+      setSearchParams(params, { replace: true });
+      return () => window.clearTimeout(timer);
+    }
+  }, [highlightId, searchParams, setSearchParams]);
 
   const totalPages = Math.max(1, Math.ceil(filteredLogs.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
@@ -210,8 +248,8 @@ export default function TodayPage() {
             <button onClick={() => { refreshData(); setCountdown(5); }} disabled={isLoading} className="btn btn--ghost btn--sm">
               <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} /> 刷新
             </button>
-            <button onClick={() => exportCsv(pagedLogs, rangeLabel)} className="btn btn--ghost btn--sm">
-              <Download className="w-3 h-3" /> 导出
+            <button onClick={() => exportExcel(filteredLogs, rangeLabel)} className="btn btn--secondary btn--sm">
+              <Download className="w-3 h-3" /> 导出 Excel
             </button>
           </div>
         </div>
@@ -234,7 +272,7 @@ export default function TodayPage() {
             ))}
           </div>
           <span className="text-xs text-warm-400">
-            {rangeLabel}投递 <span className="text-warm-700 font-semibold">{pagedLogs.length}</span> 条
+            {rangeLabel}投递 <span className="text-warm-700 font-semibold">{filteredLogs.length}</span> 条
           </span>
         </div>
       </div>
@@ -291,7 +329,7 @@ export default function TodayPage() {
         {getAllCategories().map(({ category, color }) => {
           const count = allLogs.filter(l =>
             isInRange(l.timestamp, activeRange) &&
-            classifyJob(l.jobTitle).category === category &&
+            (l.jobCategory || classifyJob(l.jobTitle).category) === category &&
             (activeStatus === 'all' || activeStatus === 'success'
               ? (activeStatus === 'success' ? l.status === 'success' : true)
               : (l.filterStateName || (l.status !== 'success' ? '其他原因' : '')) === activeStatus)
@@ -320,37 +358,40 @@ export default function TodayPage() {
         ) : (
           <table className="w-full table-fixed">
             <thead>
-              {/* ── 单行表头：8 列同一级 ── */}
+              {/* ── 单行表头：左侧列压缩，剩余空间留给消极/积极 ── */}
               <tr className="border-b border-warm-100 bg-warm-50/50">
-                <th className="px-3 py-3 text-left text-2xs font-semibold text-warm-400 uppercase tracking-wider w-14">分类</th>
-                <th className="px-3 py-3 text-left text-2xs font-semibold text-warm-400 uppercase tracking-wider" style={{ width: '18%' }}>岗位名称</th>
-                <th className="px-3 py-3 text-left text-2xs font-semibold text-warm-400 uppercase tracking-wider w-28">公司</th>
-                <th className="px-3 py-3 text-left text-2xs font-semibold text-warm-400 uppercase tracking-wider w-20">时间</th>
-                <th className="px-3 py-3 text-left text-2xs font-semibold text-warm-400 uppercase tracking-wider w-24">结果</th>
-                <th className="px-3 py-3 text-left text-2xs font-semibold text-warm-400 uppercase tracking-wider w-28">
+                <th className="px-2 py-2 text-left text-2xs font-semibold text-warm-400 uppercase tracking-wider w-24">分类</th>
+                <th className="px-2 py-2 text-left text-2xs font-semibold text-warm-400 uppercase tracking-wider" style={{ width: '11%' }}>岗位名称</th>
+                <th className="px-2 py-2 text-left text-2xs font-semibold text-warm-400 uppercase tracking-wider w-24">公司</th>
+                <th className="px-2 py-2 text-left text-2xs font-semibold text-warm-400 uppercase tracking-wider w-16">时间</th>
+                <th className="px-2 py-2 text-left text-2xs font-semibold text-warm-400 uppercase tracking-wider w-20">结果</th>
+                <th className="px-2 py-2 text-left text-2xs font-semibold text-warm-400 uppercase tracking-wider w-20">
                   <span className="inline-flex items-center gap-1">
                     <Zap className="w-3 h-3 text-accent-500" />
                     AI 评分
                   </span>
                 </th>
-                <th className="px-3 py-3 text-left text-2xs font-semibold text-red-500 uppercase tracking-wider w-36">
+                <th className="px-2 py-2 text-left text-2xs font-semibold text-red-500 uppercase tracking-wider" style={{ width: '22%' }}>
                   <span className="inline-flex items-center gap-1">
                     <XIcon className="w-3 h-3" />
                     消极
                   </span>
                 </th>
-                <th className="px-3 py-3 text-left text-2xs font-semibold text-emerald-500 uppercase tracking-wider w-40">
+                <th className="px-2 py-2 text-left text-2xs font-semibold text-emerald-500 uppercase tracking-wider" style={{ width: '22%' }}>
                   <span className="inline-flex items-center gap-1">
                     <CheckCircle2 className="w-3 h-3" />
                     积极
                   </span>
                 </th>
-                <th className="px-3 py-3 w-6"></th>
+                <th className="px-2 py-2 w-6"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-warm-100">
               {pagedLogs.map(log => {
-                const { category, color } = classifyJob(log.jobTitle);
+                const category = log.jobCategory || classifyJob(log.jobTitle).category;
+                const color = log.jobCategory
+                  ? (getAllCategories().find(c => c.category === log.jobCategory)?.color || '#64748b')
+                  : classifyJob(log.jobTitle).color;
                   const isSuccess = log.status === 'success';
                   const stateLabel = log.filterStateName || (isSuccess ? '投递成功' : '系统筛选');
                   const reason = isSuccess ? (log.message || '投递成功') : getFallbackReason(log);
@@ -358,19 +399,25 @@ export default function TodayPage() {
                 return (
                   <tr
                     key={log.id}
-                    className="cursor-pointer table-row"
+                    id={`job-row-${log.id}`}
+                    className={`cursor-pointer table-row transition-colors duration-300 ${flashId === log.id ? 'bg-amber-50/80 ring-1 ring-inset ring-amber-200' : ''}`}
                     onClick={() => {
+                      // 用户正在框选文本（复制）时不跳转
+                      const sel = window.getSelection();
+                      if (sel && sel.toString().length > 0) return;
                       const qs = new URLSearchParams();
                       qs.set('from', 'today');
+                      qs.set('highlightId', log.id);
                       if (activeStatus !== 'all') qs.set('status', activeStatus);
                       if (activeRange !== 'all') qs.set('range', activeRange);
                       navigate(`/job/${log.id}?${qs.toString()}`);
                     }}
                   >
                     {/* 分类 */}
-                    <td className="px-3 py-3">
+                    <td className="px-2 py-2 align-top">
                       <span
-                        className="text-2xs px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap"
+                        className="text-2xs px-1.5 py-0.5 rounded-full font-medium truncate max-w-full inline-block align-middle"
+                        title={category}
                         style={{ backgroundColor: `${color}15`, color, border: `1px solid ${color}30` }}
                       >
                         {category}
@@ -378,21 +425,21 @@ export default function TodayPage() {
                     </td>
 
                     {/* 岗位名 */}
-                    <td className="px-3 py-3">
-                      <span className="text-sm text-warm-800 truncate block max-w-[180px] font-medium">
+                    <td className="px-2 py-2 align-top">
+                      <span className="text-sm text-warm-800 truncate block font-medium" title={log.jobTitle}>
                         {log.jobTitle}
                       </span>
                     </td>
 
                     {/* 公司 */}
-                    <td className="px-3 py-3">
-                      <span className="text-sm text-warm-600 truncate block max-w-[120px]">
+                    <td className="px-2 py-2 align-top">
+                      <span className="text-sm text-warm-600 truncate block" title={log.companyName}>
                         {log.companyName}
                       </span>
                     </td>
 
                     {/* 时间 */}
-                    <td className="px-3 py-3">
+                    <td className="px-2 py-2 align-top">
                       <span className="text-xs text-warm-400 font-mono tabular-nums whitespace-nowrap">
                         {new Date(log.timestamp).toLocaleString('zh-CN', {
                           month: '2-digit', day: '2-digit',
@@ -402,8 +449,8 @@ export default function TodayPage() {
                     </td>
 
                     {/* 结果 */}
-                    <td className="px-3 py-3">
-                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium ${
+                    <td className="px-2 py-2 align-top">
+                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium whitespace-nowrap ${
                         isSuccess
                           ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                           : 'bg-red-50 text-red-700 border border-red-200'
@@ -413,38 +460,26 @@ export default function TodayPage() {
                       </span>
                     </td>
 
-                    {/* AI 评分 */}
-                    <td className="px-3 py-3">
-                      {isSuccess ? (
-                        <span className="text-xs text-emerald-600">{log.message || '投递成功'}</span>
-                      ) : (
-                        <ScoreBar
-                          message={log.aiScoring?.message}
-                          fallback={reason}
-                        />
-                      )}
+                    {/* AI 评分：投递成功与失败使用同一布局 */}
+                    <td className="px-2 py-2 align-top">
+                      <ScoreBar
+                        message={log.aiScoring?.message}
+                        fallback={isSuccess ? '投递成功' : reason}
+                      />
                     </td>
 
                     {/* 消极 */}
-                    <td className="px-3 py-3 overflow-hidden">
-                      {isSuccess ? (
-                        <span className="text-xs text-warm-400">—</span>
-                      ) : (
-                        <NegativeList message={log.aiScoring?.message} />
-                      )}
+                    <td className="px-2 py-2 align-top overflow-hidden">
+                      <NegativeList message={log.aiScoring?.message} />
                     </td>
 
                     {/* 积极 */}
-                    <td className="px-3 py-3 overflow-hidden">
-                      {isSuccess ? (
-                        <span className="text-xs text-warm-400">—</span>
-                      ) : (
-                        <PositiveChips message={log.aiScoring?.message} />
-                      )}
+                    <td className="px-2 py-2 align-top overflow-hidden">
+                      <PositiveChips message={log.aiScoring?.message} />
                     </td>
 
                     {/* 查看 */}
-                    <td className="px-5 py-3 pr-4">
+                    <td className="px-2 py-2 align-top pr-3">
                       <ChevronRight className="w-4 h-4 text-warm-300 group-hover:text-accent-500 transition-colors" />
                     </td>
                   </tr>

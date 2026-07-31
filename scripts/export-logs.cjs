@@ -1,45 +1,33 @@
-// 日志导出脚本 - 从 Chrome/Firefox 浏览器插件读取 Boss 直聘投递日志
+// 日志导出脚本 - 从 Chrome/Firefox 浏览器插件读取 BOSS 投递数据
+// 数据流：浏览器 LocalStorage → SQLite 数据库 → extension-data.json → 前端
 // 用法: node scripts/export-logs.cjs [--watch] [--compact]
 const { Level } = require('level');
 const path = require('path');
 const fs = require('fs');
 const { readFirefoxStorageData } = require('./decode-firefox.cjs');
 const { readAiScoringLogs } = require('./extract-ai-scoring.cjs');
+const db = require('./boss-db.cjs');
 
 // ====== 配置 ======
-const OUTPUT_PATH = path.join(__dirname, '..', 'public', 'extension-data.json');
-
-// 上一轮的 ID 集合（用于检测新增投递）
-let prevIds = null;
-// 上一轮数据（用于增量显示）
-let prevChromeCnt = 0;
-let prevTotalCnt = 0;
-
-// Chrome 插件路径
 const CHROME_EXT_ID = 'ogkmgjbagackkdlcibcailacnncgonbn';
 const CHROME_LDB_PATH = path.join(
   process.env.LOCALAPPDATA,
   'Google', 'Chrome', 'User Data', 'Default',
   'Local Extension Settings', CHROME_EXT_ID
 );
-
-// Firefox 配置
 const FF_PROFILE = 'uz0ave2f.default-release-1782316007966';
 
 // ====== 工具函数 ======
 const verbose = !process.argv.includes('--compact');
 
-// 临时静音（屏蔽其他模块的 console.log）
 async function silent(fn) {
   if (verbose) return fn();
   const orig = console.log;
   console.log = () => {};
   try { return await fn(); } finally { console.log = orig; }
 }
+function log(...args) { if (verbose) console.log(...args); }
 
-function log(...args) {
-  if (verbose) console.log(...args);
-}
 function copyDir(src, dst) {
   if (!fs.existsSync(src)) return false;
   if (fs.existsSync(dst)) fs.rmSync(dst, { recursive: true, force: true });
@@ -52,35 +40,30 @@ async function readLevelDB(dbPath, label) {
     log(`  [${label}] 路径不存在，跳过`);
     return {};
   }
-
   const tmpPath = path.join(process.env.TEMP || '/tmp', `boss-ldb-${label.replace(/[^a-z0-9]/gi, '_')}`);
   if (!copyDir(dbPath, tmpPath)) {
     log(`  [${label}] 复制失败，跳过`);
     return {};
   }
-
-  const db = new Level(tmpPath, { valueEncoding: 'utf8', createIfMissing: false });
+  const ldb = new Level(tmpPath, { valueEncoding: 'utf8', createIfMissing: false });
   const data = {};
-
   try {
-    await db.open();
-    const keys = await db.keys().all();
+    await ldb.open();
+    const keys = await ldb.keys().all();
     let count = 0;
-
     for (const key of keys) {
       if (key.startsWith('_') || key.startsWith('meta$') || key === 'VERSION') continue;
       try {
-        const raw = await db.get(key);
+        const raw = await ldb.get(key);
         try { data[key] = JSON.parse(raw); } catch { data[key] = raw; }
         count++;
-      } catch { /* skip */ }
+      } catch {}
     }
     log(`  [${label}] ${count} 键`);
   } catch (err) {
     console.log(`  ❌ [${label}] 读取失败: ${err.message}`);
   }
-
-  try { await db.close(); } catch {}
+  try { await ldb.close(); } catch {}
   return data;
 }
 
@@ -88,7 +71,10 @@ async function readLevelDB(dbPath, label) {
 async function exportAll() {
   const ts = `[${new Date().toLocaleTimeString('zh-CN')}]`;
 
-  // 读取 Chrome LevelDB（用 silent 屏蔽内部日志）
+  // 1. 初始化数据库（如首次运行）
+  db.init();
+
+  // 2. 读取 Chrome LevelDB（扩展存储）
   const chromeData = await silent(() => readLevelDB(CHROME_LDB_PATH, 'Chrome'));
 
   // 自动修复 CURRENT 文件（确保指向最新的 MANIFEST）
@@ -111,7 +97,7 @@ async function exportAll() {
     }
   } catch {}
 
-  // 读取 Chrome + Firefox localStorage pipeline cache
+  // 3. 读取 Chrome + Firefox localStorage pipeline cache
   let chromePipelineCache = {};
   let firefoxLsPipeline = {};
   let pipelineChromeCnt = 0, pipelineFirefoxCnt = 0;
@@ -130,17 +116,7 @@ async function exportAll() {
       }
     } catch {}
     firefoxLsPipeline = firefoxLsPipelineTmp;
-
-    if (Object.keys(chromePipelineCache || {}).length > 0 || Object.keys(firefoxLsPipeline || {}).length > 0) {
-      const mergedLsPipeline = {};
-      for (const k of Object.keys(firefoxLsPipeline || {})) mergedLsPipeline[k] = firefoxLsPipeline[k];
-      for (const k of Object.keys(chromePipelineCache || {})) mergedLsPipeline[k] = chromePipelineCache[k];
-      if (!chromeData['pipeline-cache']) chromeData['pipeline-cache'] = { data: {} };
-      if (!chromeData['pipeline-cache'].data) chromeData['pipeline-cache'].data = {};
-      Object.assign(chromeData['pipeline-cache'].data, mergedLsPipeline);
-    }
   } catch (e) {
-    // 检测是否是 LevelDB 损坏导致的 Object.keys(null)
     if (e.message && e.message.includes('null')) {
       console.log(`  ⚠️ Chrome LevelDB 可能损坏，建议重启 Chrome 自动修复`);
     } else {
@@ -148,7 +124,7 @@ async function exportAll() {
     }
   }
 
-  // 读取 Firefox 扩展数据
+  // 4. 读取 Firefox 扩展数据
   let firefoxData = {};
   try {
     firefoxData = await silent(() => readFirefoxStorageData(FF_PROFILE));
@@ -157,280 +133,296 @@ async function exportAll() {
     console.log('  ⚠️ 跳过 Firefox，继续导出 Chrome 数据...');
   }
 
-  // 读取 AI 评分
+  // 5. 读取 AI 评分
   let aiScoringLogs = null;
-  let aiScoringWithScore = 0;
   try {
     const logs = await silent(() => readAiScoringLogs());
-    if (logs && logs.length > 0) {
-      aiScoringLogs = logs;
-      aiScoringWithScore = logs.filter(r => r.message && r.message.includes('分数')).length;
-    }
+    if (logs && logs.length > 0) aiScoringLogs = logs;
   } catch (e) {
     console.log(`  ❌ AI 评分读取失败: ${e.message}`);
   }
 
-  // 合并数据 (合并 pipeline-cache.data，每条记录标记来源)
-  // Chrome 数据优先（同一 key 时 Chrome 覆盖 Firefox）
-  const ffPipelineData = firefoxData['pipeline-cache']?.data || {};
-  const chPipelineData = chromeData['pipeline-cache']?.data || {};
+  // 6. 把浏览器数据写入数据库（关键：数据库是真正的数据持久层）
+  let writeStats = { pipeline: { inserted: 0, updated: 0 }, aiScoring: { inserted: 0, updated: 0 } };
 
-  // 从 dist/extension-data.json 恢复旧记录（防止 Chrome 插件数据丢失）
-  // dist 是历史部署版本，里面有旧的 Chrome/Firefox 投递记录，可以补充当前缺失的
-  const DIST_BACKUP = path.join(__dirname, '..', 'dist', 'extension-data.json');
-  if (fs.existsSync(DIST_BACKUP)) {
-    try {
-      const backupData = JSON.parse(fs.readFileSync(DIST_BACKUP, 'utf-8'));
-      const backupPipeline = backupData['pipeline-cache']?.data || {};
-      const backupChromeKeys = Object.keys(backupPipeline).filter(k => backupPipeline[k]?._source === 'chrome');
-      const backupFirefoxKeys = Object.keys(backupPipeline).filter(k => backupPipeline[k]?._source === 'firefox');
-      let restoredChrome = 0, restoredFirefox = 0;
-      for (const k of backupChromeKeys) {
-        if (!chPipelineData[k]) {
-          chPipelineData[k] = backupPipeline[k];
-          restoredChrome++;
-        }
-      }
-      for (const k of backupFirefoxKeys) {
-        if (!ffPipelineData[k]) {
-          ffPipelineData[k] = backupPipeline[k];
-          restoredFirefox++;
-        }
-      }
-      if (restoredChrome > 0 || restoredFirefox > 0) {
-        log(`  🔄 从备份恢复 ${restoredChrome} 条 Chrome / ${restoredFirefox} 条 Firefox`);
-      }
-    } catch (e) {
-      console.log(`  ⚠️ 读取备份失败: ${e.message}`);
+  // 合并本次获取的 pipeline cache（Chrome 优先级 > Firefox）
+  if (chromePipelineCache && Object.keys(chromePipelineCache).length > 0) {
+    const r = db.upsertPipelineRecords(chromePipelineCache, 'chrome');
+    writeStats.pipeline.inserted += r.inserted;
+    writeStats.pipeline.updated += r.updated;
+  }
+  if (firefoxLsPipeline && Object.keys(firefoxLsPipeline).length > 0) {
+    const r = db.upsertPipelineRecords(firefoxLsPipeline, 'firefox');
+    writeStats.pipeline.inserted += r.inserted;
+    writeStats.pipeline.updated += r.updated;
+  }
+
+  // 写入 AI 评分
+  if (aiScoringLogs && aiScoringLogs.length > 0) {
+    const aiChrome = aiScoringLogs.filter(r => r._source === 'chrome' || !r._source);
+    const aiFirefox = aiScoringLogs.filter(r => r._source === 'firefox');
+    if (aiChrome.length > 0) {
+      const r = db.upsertAiScoringLogs(aiChrome, 'chrome');
+      writeStats.aiScoring.inserted += r.inserted;
+      writeStats.aiScoring.updated += r.updated;
+    }
+    if (aiFirefox.length > 0) {
+      const r = db.upsertAiScoringLogs(aiFirefox, 'firefox');
+      writeStats.aiScoring.inserted += r.inserted;
+      writeStats.aiScoring.updated += r.updated;
     }
   }
 
-  // 给 Firefox 记录添加 _source 标记
-  for (const key of Object.keys(ffPipelineData)) {
-    if (ffPipelineData[key] && typeof ffPipelineData[key] === 'object') {
-      ffPipelineData[key]._source = 'firefox';
-    }
-  }
-  // 给 Chrome 记录添加 _source 标记
-  for (const key of Object.keys(chPipelineData)) {
-    if (chPipelineData[key] && typeof chPipelineData[key] === 'object') {
-      chPipelineData[key]._source = 'chrome';
-    }
-  }
+  // 写入每日统计
+  const allStats = [
+    ...(Array.isArray(firefoxData['web-geek-job-Statistics']) ? firefoxData['web-geek-job-Statistics'].filter(s => s && typeof s === 'object' && s.date) : []),
+    ...(Array.isArray(chromeData['web-geek-job-Statistics']) ? chromeData['web-geek-job-Statistics'].filter(s => s && typeof s === 'object' && s.date) : []),
+  ];
+  if (allStats.length > 0) db.upsertDailyStatistics(allStats);
 
-  const mergedPipelineData = {
-    ...ffPipelineData,
-    ...chPipelineData,
-  };
-  const mergedPipeline = { data: mergedPipelineData };
+  // 写入今日数据
+  const today = chromeData['web-geek-job-Today'] || firefoxData['web-geek-job-Today'];
+  if (today) db.upsertToday(today);
 
-  // 检测新增记录（对比 Chrome/Firefox 实时数据，不含 backup）
-  if (verbose && prevIds !== null) {
-    try {
-      // 当前实时数据 ID（仅 Chrome localStorage + Firefox localStorage）
-      const liveIds = new Set();
-      if (chromePipelineCache) {
-        for (const id of Object.keys(chromePipelineCache)) liveIds.add(id);
-      }
-      if (typeof firefoxLsPipeline !== 'undefined' && firefoxLsPipeline) {
-        for (const id of Object.keys(firefoxLsPipeline)) liveIds.add(id);
-      }
-      
-      const newIds = [...liveIds].filter(id => !prevIds.has(id));
-      
-      if (newIds.length > 0) {
-        const scoreMap = {};
-        if (Array.isArray(aiScoringLogs)) {
-          for (const r of aiScoringLogs) {
-            const m = String(r.message || '');
-            const match = m.match(/分数[：:]\s*(-?\d+)/);
-            if (match) scoreMap[r.encryptJobId] = match[1];
-          }
-        }
-        
-        console.log(`\n📥 新增 ${newIds.length} 条投递:`);
-        for (const id of newIds.slice(-20)) {
-          const r = (chromePipelineCache && chromePipelineCache[id]) || (firefoxLsPipeline && firefoxLsPipeline[id]);
-          if (!r) continue;
-          const company = r.brandName || r.companyName || '?';
-          const job = r.jobName || '?';
-          const status = r.status === 'success' ? '✅' : r.status === 'warning' ? '⚠️' : '❌';
-          const score = scoreMap[id] || '—';
-          console.log(`   ${status} ${company} | ${job} | 分数 ${score}`);
-        }
-        if (newIds.length > 20) console.log(`   ... 还有 ${newIds.length - 20} 条`);
-      }
-    } catch {}
-  }
-  // 保存当前实时 ID 给下一轮用
-  prevIds = new Set();
-  if (chromePipelineCache) for (const id of Object.keys(chromePipelineCache)) prevIds.add(id);
-  if (typeof firefoxLsPipeline !== 'undefined' && firefoxLsPipeline) for (const id of Object.keys(firefoxLsPipeline)) prevIds.add(id);
+  // 7. 从数据库读取所有累积数据（关键：读取已包含历史+本次新增）
+  const allPipelineData = db.getAllPipelineData();
+  const allAiScoring = db.getAllAiScoringLogs();
+  const allStatsFromDB = db.getAllDailyStatistics();
+  const dbStats = db.getStats();
 
-  // 合并 Statistics (过滤非对象项，按日期合并)
-  const ffStats = (firefoxData['web-geek-job-Statistics'] || []).filter(s => s && typeof s === 'object' && s.date);
-  const chStats = (chromeData['web-geek-job-Statistics'] || []).filter(s => s && typeof s === 'object' && s.date);
-  const allStats = [...ffStats, ...chStats];
-
-  // 按日期合并（同一天的数据相加）
-  const statsByDate = {};
-  for (const s of allStats) {
-    if (!statsByDate[s.date]) {
-      statsByDate[s.date] = { ...s };
-    } else {
-      const existing = statsByDate[s.date];
-      for (const key of Object.keys(s)) {
-        if (key === 'date') continue;
-        existing[key] = (existing[key] || 0) + (s[key] || 0);
-      }
-    }
-  }
-  const mergedStats = Object.values(statsByDate).sort((a, b) => a.date.localeCompare(b.date));
-
+  // 8. 拼装 extension-data.json 完整结构
   const merged = {
     _meta: {
       exportedAt: new Date().toISOString(),
       sources: {
-        chrome: Object.keys(chromeData).length > 0,
-        firefox: Object.keys(firefoxData).length > 0,
+        chrome: pipelineChromeCnt > 0,
+        firefox: pipelineFirefoxCnt > 0,
       },
+      fromDatabase: true,
+      newInThisRun: writeStats,
+      dbStats,
     },
     ...firefoxData,
     ...chromeData,
-    'pipeline-cache': mergedPipeline,
-    'web-geek-job-Statistics': mergedStats,
-    'ai-scoring-logs': aiScoringLogs,
+    'pipeline-cache': { data: allPipelineData },
+    'web-geek-job-Statistics': allStatsFromDB,
+    'ai-scoring-logs': allAiScoring,
   };
 
-  // 从 dist 备份恢复 AI评分历史（防止 localStorage 清理后丢失）
-  if (aiScoringLogs && aiScoringLogs.length > 0) {
-    try {
-      const distPath = path.join(__dirname, '..', 'dist', 'extension-data.json');
-      if (fs.existsSync(distPath)) {
-        const oldDist = JSON.parse(fs.readFileSync(distPath, 'utf-8'));
-        const oldAi = oldDist['ai-scoring-logs'];
-        if (Array.isArray(oldAi) && oldAi.length > aiScoringLogs.length) {
-          const curIds = new Set(aiScoringLogs.map(r => r.encryptJobId + '|' + r.time));
-          const missing = oldAi.filter(r => !curIds.has(r.encryptJobId + '|' + r.time));
-          if (missing.length > 0) {
-            merged['ai-scoring-logs'] = [...aiScoringLogs, ...missing];
-            aiScoringLogs = merged['ai-scoring-logs'];
-            log(`  📊 AI评分补回 ${missing.length} 条历史 (dist备份)`);
-          }
-        }
-      }
-    } catch {}
+  // 保留今日数据
+  const todayData = db.getToday();
+  if (todayData) merged['web-geek-job-Today'] = todayData;
+
+  // 清理非业务字段（不要把配置类的 sameHr、conf-user 等塞进每日扩展）
+  // 这些字段保留在 merged 里以兼容其他可能的读取方
+
+  // 9. 写入文件（主输出 + dist 备份 + 每日快照）
+  const outputs = db.writeJsonOutputs(merged);
+
+  // 10. 显示摘要
+  const w = writeStats;
+
+  // 计算 Chrome 缓存中最新抓取时间 + 已同步数量（用于精简模式直观展示）
+  let latestCapture = 0;
+  if (chromePipelineCache && typeof chromePipelineCache === 'object') {
+    for (const id of Object.keys(chromePipelineCache)) {
+      const r = chromePipelineCache[id];
+      const t = r && (r.createdAt || r.time || r.lastAccessed || 0);
+      if (t > latestCapture) latestCapture = t;
+    }
   }
+  const synced = Math.max(0, pipelineChromeCnt - w.pipeline.inserted);
+  const latestStr = latestCapture
+    ? new Date(latestCapture).toLocaleString('zh-CN', { hour12: false })
+    : '未知';
 
-  // 统计
-  const pipeline = merged['pipeline-cache'];
-  const stats = merged['web-geek-job-Statistics'];
-  const recordCount = pipeline?.data ? Object.keys(pipeline.data).length : 0;
-  const statsDays = Array.isArray(stats) ? stats.length : 0;
-
-  // 写入文件
-  const dir = path.dirname(OUTPUT_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(OUTPUT_PATH, JSON.stringify(merged, null, 2), 'utf-8');
-
-  // 同步备份到 dist/（保留完整历史）
-  try {
-    const distDir = path.join(__dirname, '..', 'dist');
-    if (!fs.existsSync(distDir)) fs.mkdirSync(distDir, { recursive: true });
-    const distPath = path.join(distDir, 'extension-data.json');
-    fs.copyFileSync(OUTPUT_PATH, distPath);
-  } catch (e) {}
+  // 今日维度：直接读 DB 中的 web-geek-job-Today（Helper 的权威今日数）
+  const todayNow = todayData || {};
+  const todayTotal = todayNow.total || 0;
+  const todaySuccess = todayNow.success || 0;
+  const todayStr = `今日 ${todayTotal}岗(成功${todaySuccess})`;
 
   if (verbose) {
-    const aiCnt = aiScoringLogs ? aiScoringLogs.length : 0;
-    console.log(`🔄 ${ts}  ✅ ${recordCount}条投递 · AI ${aiCnt} · Chrome缓存 ${pipelineChromeCnt} / Firefox ${pipelineFirefoxCnt}`);
+    const totalPipeline = dbStats.pipeline;
+    const totalAi = dbStats.aiScoring;
+    console.log(`🔄 ${ts}  ✅ 累计 ${totalPipeline}条投递 · AI ${totalAi} · 本次 Chrome ${pipelineChromeCnt}/${pipelineFirefoxCnt}`);
+    console.log(`   📥 写入: 投递 +${w.pipeline.inserted}条/~${w.pipeline.updated}条 · AI +${w.aiScoring.inserted}/${w.aiScoring.updated}`);
+    console.log(`   🔍 Chrome缓存 ${pipelineChromeCnt}条 · 其中已同步 ${synced}条 · 最新抓取 ${latestStr}`);
+    console.log(`   📅 ${todayStr}（与 Helper 今日统计对齐）`);
+    console.log(`   📁 快照: ${outputs.snapshot}`);
   } else {
-    console.log(`  ✅ 本次投递 Chrome${pipelineChromeCnt}条 | 累计 ${recordCount}`);
+    // 精简模式：只显示今日维度（与 Helper 今日统计对齐，最直观）
+    console.log(`  ${todayStr}`);
   }
 
-  // 自动清理 Chrome localStorage 释放空间（跳过 CURRENT/LOCK/MANIFEST 避免覆盖）
+  // 11. 清理 Chrome localStorage（仅清理 AI 评分，不动 pipeline_cache）
+  // 策略：
+  //   - boss_pipeline_cache 不动（Helper 插件依赖这些记录做去重）
+  //   - boss_ai_scoring 超过 1000 条时，保留最近 800 条
   try {
     const lsPath = path.join(
       process.env.LOCALAPPDATA, 'Google', 'Chrome', 'User Data', 'Default', 'Local Storage', 'leveldb'
     );
-    if (!fs.existsSync(lsPath)) return merged;
+    if (!fs.existsSync(lsPath)) return;
 
-    const { Level } = require('level');
+    const { Level: L2 } = require('level');
     const tmpTrim = path.join(process.env.TEMP || '/tmp', 'boss-trim-' + Date.now());
     if (fs.existsSync(tmpTrim)) fs.rmSync(tmpTrim, { recursive: true, force: true });
 
     fs.cpSync(lsPath, tmpTrim, { recursive: true });
-    const tdb = new Level(tmpTrim, { valueEncoding: 'buffer', createIfMissing: false });
-    try { await tdb.open(); } catch { 
-      // LevelDB 损坏，跳过清理
+    const tdb = new L2(tmpTrim, { valueEncoding: 'buffer', createIfMissing: false });
+    try { await tdb.open(); } catch {
       await tdb.close().catch(() => {});
       try { fs.rmSync(tmpTrim, { recursive: true, force: true }); } catch {}
-      return merged;
+      return;
     }
     const tkeys = await tdb.keys().all();
+
+    const skipFiles = new Set(['CURRENT', 'LOCK', 'CURRENT.bak']);
+    let anyTrimmed = false;
+
+    // ---- 仅清理 boss_ai_scoring（保留最近 800 条） ----
     const scoringKey = tkeys.find(k => k.includes('boss_ai_scoring'));
-
     if (scoringKey) {
-      const buf = await tdb.get(scoringKey);
-      let start = -1;
-      for (let i = 0; i < buf.length - 1; i++) {
-        if (buf[i] === 0x5B && buf[i + 1] === 0x00) { start = i; break; }
-      }
-      if (start >= 0) {
-        const json = buf.slice(start);
-        const str = json.toString('utf16le');
-        const close = str.lastIndexOf(']');
-        const arr = JSON.parse(str.slice(0, close + 1));
-        if (arr.length > 1000) {
-          const trimmed = arr.slice(-800);
-          const prefix = buf.slice(0, start);
-          const newBuf = Buffer.from(JSON.stringify(trimmed), 'utf16le');
-          const combined = Buffer.concat([prefix, newBuf]);
-          await tdb.put(scoringKey, combined);
-          await tdb.close();
-
-          // 逐文件写回（跳过元数据文件，避免覆盖 CURRENT/MANIFEST）
-          let written = 0;
-          const skipFiles = new Set(['CURRENT', 'LOCK', 'CURRENT.bak']);
-          for (const f of fs.readdirSync(tmpTrim)) {
-            if (skipFiles.has(f) || f.startsWith('MANIFEST-')) continue;
-            const srcFile = path.join(lsPath, f);
-            const tmpFile = path.join(tmpTrim, f);
-            try {
-              try { fs.unlinkSync(srcFile); } catch {}
-              fs.copyFileSync(tmpFile, srcFile);
-              written++;
-            } catch {}
-          }
-          const freed = ((buf.length - combined.length) / 1024).toFixed(0);
-          if (verbose) console.log(`  🧹 已清理 localStorage (bos_ai_scoring ${arr.length}→${trimmed.length}条, 释放${freed}KB)`);
-        } else {
-          await tdb.close();
+      try {
+        const buf = await tdb.get(scoringKey);
+        let start = -1;
+        for (let i = 0; i < buf.length - 1; i++) {
+          if (buf[i] === 0x5B && buf[i + 1] === 0x00) { start = i; break; }
         }
-      } else {
-        await tdb.close();
+        if (start >= 0) {
+          const json = buf.slice(start);
+          const str = json.toString('utf16le');
+          const close = str.lastIndexOf(']');
+          const arr = JSON.parse(str.slice(0, close + 1));
+          if (arr.length > 1000) {
+            const trimmed = arr.slice(-800);
+            const prefix = buf.slice(0, start);
+            const newBuf = Buffer.from(JSON.stringify(trimmed), 'utf16le');
+            const combined = Buffer.concat([prefix, newBuf]);
+            await tdb.put(scoringKey, combined);
+            anyTrimmed = true;
+
+            if (verbose) {
+              const freed = ((buf.length - combined.length) / 1024).toFixed(1);
+              console.log(`  🧹 已清理 ai_scoring ${arr.length}→${trimmed.length}条 (释放${freed}KB)`);
+            }
+          }
+        }
+      } catch {}
+    }
+
+    await tdb.close();
+
+    // ---- 如果有清理发生，把修改后的 leveldb 文件写回 ----
+    if (anyTrimmed) {
+      for (const f of fs.readdirSync(tmpTrim)) {
+        if (skipFiles.has(f) || f.startsWith('MANIFEST-')) continue;
+        const srcFile = path.join(lsPath, f);
+        const tmpFile = path.join(tmpTrim, f);
+        try {
+          try { fs.unlinkSync(srcFile); } catch {}
+          fs.copyFileSync(tmpFile, srcFile);
+        } catch {}
       }
-    } else {
-      await tdb.close();
     }
     try { fs.rmSync(tmpTrim, { recursive: true, force: true }); } catch {}
   } catch {}
-  return merged;
+
+  // 12. 增量触发岗位分类（累计新增 500 条投递记录，调用 MiMo 分类脚本）
+  try {
+    const cp = require('child_process');
+    const lockFile = path.join(__dirname, '..', '.classify-lock');
+    if (fs.existsSync(lockFile)) {
+      if (verbose) console.log('  🏷️ 岗位分类进程运行中，跳过本次触发');
+    } else {
+      const stateFile = path.join(__dirname, '..', '.classification-state.json');
+      let state = { pendingNew: 0 };
+      try {
+        state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      } catch {
+        /* 首次 */
+      }
+      state.pendingNew = (state.pendingNew || 0) + (w.pipeline.inserted || 0);
+      if (state.pendingNew >= 500) {
+        state.pendingNew = 0;
+        fs.writeFileSync(stateFile, JSON.stringify(state));
+        if (verbose) console.log('  🏷️ 累计新增达 500 条，触发岗位分类...');
+        const child = cp.spawn(
+          process.execPath,
+          [path.join(__dirname, 'classify-jobs.mjs')],
+          { detached: true, stdio: 'ignore', env: process.env },
+        );
+        child.unref();
+      } else {
+        fs.writeFileSync(stateFile, JSON.stringify(state));
+      }
+    }
+  } catch (e) {
+    if (verbose) console.log('  ⚠️ 岗位分类增量触发失败: ' + e.message);
+  }
+
+  // 13. 增量触发 AI 评分因素分类（累计新增 500 条 AI 评分记录，调用 MiMo factor 分类脚本）
+  try {
+    const cp = require('child_process');
+    const lockFile = path.join(__dirname, '..', '.factor-classify-lock');
+    if (fs.existsSync(lockFile)) {
+      if (verbose) console.log('  🏷️ factor 分类进程运行中，跳过本次触发');
+    } else {
+      const stateFile = path.join(__dirname, '..', '.factor-classification-state.json');
+      let state = { pendingNew: 0 };
+      try {
+        state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      } catch {
+        /* 首次 */
+      }
+      state.pendingNew = (state.pendingNew || 0) + (w.aiScoring.inserted || 0);
+      if (state.pendingNew >= 500) {
+        state.pendingNew = 0;
+        fs.writeFileSync(stateFile, JSON.stringify(state));
+        if (verbose) console.log('  🏷️ 累计新增达 500 条 AI 评分，触发 factor 分类...');
+        const child = cp.spawn(
+          process.execPath,
+          [path.join(__dirname, 'classify-factors.mjs')],
+          { detached: true, stdio: 'ignore', env: process.env },
+        );
+        child.unref();
+      } else {
+        fs.writeFileSync(stateFile, JSON.stringify(state));
+      }
+    }
+  } catch (e) {
+    if (verbose) console.log('  ⚠️ factor 分类增量触发失败: ' + e.message);
+  }
 }
 
-// 监听模式
+// ====== 入口 ======
 const watchMode = process.argv.includes('--watch');
 const compactMode = process.argv.includes('--compact');
 
-if (watchMode) {
-  const INTERVAL = 60 * 1000; // 60秒
-  console.log(`👀 监听模式启动，每 ${INTERVAL / 1000} 秒检查一次...`);
-  console.log(`   输出文件: ${OUTPUT_PATH}`);
-  if (!compactMode) console.log('   按 Ctrl+C 退出\n');
-  else console.log('   精简模式（--compact），仅显示摘要\n');
+async function main() {
+  if (watchMode) {
+    const INTERVAL = 60 * 1000;
+    console.log(`👀 监听模式启动，每 ${INTERVAL / 1000} 秒检查一次...`);
+    console.log(`   数据库: ${db.DB_PATH}`);
+    console.log(`   输出文件: ${db.OUTPUT_PATH}`);
+    if (!compactMode) console.log('   按 Ctrl+C 退出\n');
+    else console.log('   精简模式（--compact），仅显示摘要\n');
 
-  exportAll();
-  setInterval(exportAll, INTERVAL);
-} else {
-  exportAll().catch(console.error);
+    // 优雅退出
+    process.on('SIGINT', () => { db.close(); console.log('\n👋 已退出'); process.exit(0); });
+    process.on('SIGTERM', () => { db.close(); process.exit(0); });
+
+    await exportAll();
+    setInterval(exportAll, INTERVAL);
+  } else {
+    await exportAll();
+    db.close();
+  }
 }
+
+main().catch(err => {
+  console.error('❌ 致命错误:', err);
+  db.close();
+  process.exit(1);
+});
