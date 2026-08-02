@@ -120,12 +120,18 @@ export const DEFAULT_SETTINGS: AISettings = {
   providers: {
     spark: {
       baseUrl: 'https://spark-api-open.xf-yun.com/v1',
-      apiKey: '',
+      apiKey:
+        (import.meta as unknown as { env?: Record<string, string> })?.env
+          ?.VITE_SPARK_API_KEY ?? '',
       model: 'lite',
     },
     agnes: {
-      baseUrl: '',
-      apiKey: '',
+      baseUrl:
+        (import.meta as unknown as { env?: Record<string, string> })?.env
+          ?.VITE_AGNES_BASE_URL ?? '',
+      apiKey:
+        (import.meta as unknown as { env?: Record<string, string> })?.env
+          ?.VITE_AGNES_API_KEY ?? '',
       model: 'agnes-2.0-flash',
     },
     custom: {
