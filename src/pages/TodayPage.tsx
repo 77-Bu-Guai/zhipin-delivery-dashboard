@@ -235,9 +235,9 @@ export default function TodayPage() {
   return (
     <div className="w-full space-y-5">
       {/* ===== 顶栏：标题 + 操作 ===== */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-3">
-          <h2 className="font-display text-3xl tracking-tight text-warm-900">投递记录</h2>
+          <h2 className="font-display text-2xl sm:text-3xl tracking-tight text-warm-900">投递记录</h2>
           <div className="flex items-center gap-2 text-xs">
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 font-medium">
               <Zap className="w-3 h-3" /> 实时
@@ -356,7 +356,8 @@ export default function TodayPage() {
         {pagedLogs.length === 0 ? (
           <div className="py-20 text-center text-sm text-warm-400">暂无匹配记录</div>
         ) : (
-          <table className="w-full table-fixed">
+          <div className="overflow-x-auto">
+          <table className="w-full table-fixed min-w-[760px]">
             <thead>
               {/* ── 单行表头：左侧列压缩，剩余空间留给消极/积极 ── */}
               <tr className="border-b border-warm-100 bg-warm-50/50">
@@ -487,6 +488,7 @@ export default function TodayPage() {
               })}
             </tbody>
           </table>
+          </div>
         )}
 
         {/* 分页 */}

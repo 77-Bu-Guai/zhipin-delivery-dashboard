@@ -89,7 +89,7 @@ export default function DashboardPage() {
     <div className="w-full space-y-8 animate-in">
       {/* 页面标题 */}
       <div className="flex items-center gap-4">
-        <h2 className="font-display text-3xl tracking-tight text-warm-900">
+        <h2 className="font-display text-2xl sm:text-3xl tracking-tight text-warm-900">
           投递总览
         </h2>
       </div>
@@ -130,11 +130,11 @@ export default function DashboardPage() {
       {/* ============ 投递日志视图 ============ */}
         <div className="space-y-8">
           {/* Bento 指标卡片 */}
-          <div className="grid grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-5">
             {/* 总投递 */}
             <div className="card p-5 col-span-1 space-y-1 animate-in animate-in--delay-1">
               <p className="stat-label">总投递数</p>
-              <p className="stat-number">{stats.total}</p>
+              <p className="stat-number text-2xl sm:text-3xl lg:text-4xl">{stats.total}</p>
             </div>
 
             {/* 投递成功 */}
@@ -143,7 +143,7 @@ export default function DashboardPage() {
                 <CheckCircle className="w-3 h-3 text-emerald-500" />
                 <p className="stat-label text-emerald-600">投递成功</p>
               </div>
-              <p className="stat-number text-emerald-600">{stats.success}</p>
+              <p className="stat-number text-2xl sm:text-3xl lg:text-4xl text-emerald-600">{stats.success}</p>
             </div>
 
             {/* 系统筛选 */}
@@ -152,7 +152,7 @@ export default function DashboardPage() {
                 <ShieldX className="w-3 h-3 text-amber-500" />
                 <p className="stat-label text-amber-600">系统筛选</p>
               </div>
-              <p className="stat-number text-amber-600">{stats.screened}</p>
+              <p className="stat-number text-2xl sm:text-3xl lg:text-4xl text-amber-600">{stats.screened}</p>
             </div>
 
             {/* AI 拒绝 */}
@@ -161,7 +161,7 @@ export default function DashboardPage() {
                 <XCircle className="w-3 h-3 text-red-500" />
                 <p className="stat-label text-red-600">AI 评分 &lt;20</p>
               </div>
-              <p className="stat-number text-red-600">{stats.failed}</p>
+              <p className="stat-number text-2xl sm:text-3xl lg:text-4xl text-red-600">{stats.failed}</p>
             </div>
 
             {/* 成功率 */}
@@ -170,7 +170,7 @@ export default function DashboardPage() {
                 <Percent className="w-3 h-3 text-accent-500" />
                 <p className="stat-label text-accent-600">成功率</p>
               </div>
-              <p className="stat-number text-accent-500">{stats.successRate}%</p>
+              <p className="stat-number text-2xl sm:text-3xl lg:text-4xl text-accent-500">{stats.successRate}%</p>
             </div>
           </div>
 

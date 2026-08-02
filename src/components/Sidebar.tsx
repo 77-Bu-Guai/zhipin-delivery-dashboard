@@ -1,7 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, AlertTriangle,
-  TrendingUp, Tags, Sun, FileDown, Moon, Sparkles,
+  TrendingUp, Tags, Sun, FileDown, Moon, Sparkles, Github, X,
 } from 'lucide-react';
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: '投递总览' },
@@ -15,13 +15,29 @@ const navItems = [
 interface SidebarProps {
   isDark: boolean;
   toggleTheme: () => void;
+  isOpen: boolean;
+  onClose: () => void;
 }
 
-export default function Sidebar({ isDark, toggleTheme }: SidebarProps) {
+export default function Sidebar({ isDark, toggleTheme, isOpen, onClose }: SidebarProps) {
   const location = useLocation();
 
   return (
-    <aside className="sidebar">
+    <aside
+      className={`sidebar fixed inset-y-0 left-0 w-56 z-40 transition-transform duration-300 ease-out lg:translate-x-0 ${
+        isOpen ? 'translate-x-0' : '-translate-x-full'
+      }`}
+    >
+      {/* 移动端关闭按钮 */}
+      <button
+        onClick={onClose}
+        className="lg:hidden absolute top-3 right-3 p-2 rounded-lg transition-colors hover:bg-warm-100/50 dark:hover:bg-warm-800/50"
+        style={{ color: 'var(--text-tertiary)' }}
+        aria-label="关闭菜单"
+      >
+        <X className="w-5 h-5" />
+      </button>
+
       {/* Logo */}
       <div className="px-4 pt-5 pb-3">
         <div className="flex items-center gap-2.5">
@@ -50,6 +66,7 @@ export default function Sidebar({ isDark, toggleTheme }: SidebarProps) {
             <NavLink
               key={item.to}
               to={item.to}
+              onClick={onClose}
               className={`nav-link ${isActive ? 'nav-link--active' : 'group'}`}
             >
               <Icon
@@ -78,6 +95,20 @@ export default function Sidebar({ isDark, toggleTheme }: SidebarProps) {
           )}
           <span>{isDark ? '暗色模式' : '亮色模式'}</span>
         </button>
+      </div>
+
+      {/* 查看源码 */}
+      <div className="px-3 py-2" style={{ borderTop: '1px solid var(--border-default)' }}>
+        <a
+          href="https://github.com/77-Bu-Guai/zhipin-delivery-dashboard"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="sidebar-action"
+          title="查看项目源码（GitHub）"
+        >
+          <Github className="w-5 h-5" style={{ color: 'var(--text-tertiary)' }} strokeWidth={1.75} />
+          <span>查看源码</span>
+        </a>
       </div>
 
       {/* 底部状态 */}

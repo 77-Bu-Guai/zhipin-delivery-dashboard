@@ -107,7 +107,7 @@ export default function DeductionsPage() {
       {/* 页面标题 */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <h2 className="font-display text-3xl tracking-tight text-warm-900">AI 评分扣分分析</h2>
+          <h2 className="font-display text-2xl sm:text-3xl tracking-tight text-warm-900">AI 评分扣分分析</h2>
           <span className="badge badge--neutral text-2xs">实时数据源</span>
         </div>
 
@@ -143,10 +143,10 @@ export default function DeductionsPage() {
       )}
 
       {/* 数据状态总览 */}
-      <section className="grid grid-cols-5 gap-4">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-5">
         <div className="card p-5 space-y-1">
           <p className="stat-label">AI 评分日志总数</p>
-          <p className="stat-number">{bulk.totalScoringLogs}</p>
+          <p className="stat-number text-2xl sm:text-3xl lg:text-4xl">{bulk.totalScoringLogs}</p>
           <p className="text-2xs text-warm-400">{bulk.withScoreLogs} 条含具体评分</p>
         </div>
         <div className="card p-5 space-y-1 border-l-[3px] border-l-red-400">
@@ -154,7 +154,7 @@ export default function DeductionsPage() {
             <TrendingDown className="w-3 h-3 text-red-500" />
             <p className="stat-label text-red-600">含扣分项</p>
           </div>
-          <p className="stat-number text-red-600">{bulk.withDeductions}</p>
+          <p className="stat-number text-2xl sm:text-3xl lg:text-4xl text-red-600">{bulk.withDeductions}</p>
           <p className="text-2xs text-warm-400">共 {bulk.deductions.totalItems} 条扣分</p>
         </div>
         <div className="card p-5 space-y-1 border-l-[3px] border-l-emerald-400">
@@ -162,16 +162,16 @@ export default function DeductionsPage() {
             <TrendingUp className="w-3 h-3 text-emerald-500" />
             <p className="stat-label text-emerald-600">含加分项</p>
           </div>
-          <p className="stat-number text-emerald-600">{bulk.withPositives}</p>
+          <p className="stat-number text-2xl sm:text-3xl lg:text-4xl text-emerald-600">{bulk.withPositives}</p>
           <p className="text-2xs text-warm-400">共 {bulk.positives.totalItems} 条加分</p>
         </div>
         <div className="card p-5 space-y-1 border-l-[3px] border-l-accent-400">
           <p className="stat-label text-accent-600">扣分关键词种类</p>
-          <p className="stat-number text-accent-500">{bulk.deductions.uniqueReasons}</p>
+          <p className="stat-number text-2xl sm:text-3xl lg:text-4xl text-accent-500">{bulk.deductions.uniqueReasons}</p>
         </div>
         <div className="card p-5 space-y-1 border-l-[3px] border-l-emerald-400">
           <p className="stat-label text-emerald-600">加分关键词种类</p>
-          <p className="stat-number text-emerald-600">{bulk.positives.uniqueReasons}</p>
+          <p className="stat-number text-2xl sm:text-3xl lg:text-4xl text-emerald-600">{bulk.positives.uniqueReasons}</p>
         </div>
       </section>
 
@@ -232,7 +232,7 @@ function DeductionsSection({
         </h3>
       </div>
 
-      <div className="relative w-80">
+      <div className="relative w-full max-w-xs">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-warm-400" />
         <input
           type="text"

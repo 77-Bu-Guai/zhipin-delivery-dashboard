@@ -104,7 +104,7 @@ function StatCard({
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <p className="stat-label">{label}</p>
-          <p className={`stat-number ${accentMap.text}`}>{value.toLocaleString()}</p>
+          <p className={`stat-number text-2xl sm:text-3xl lg:text-4xl ${accentMap.text}`}>{value.toLocaleString()}</p>
         </div>
         <div className={`w-9 h-9 rounded-lg bg-warm-50 flex items-center justify-center group-hover:scale-110 transition-transform duration-300`}>
           <Icon className={`w-4 h-4 ${accentMap.icon}`} strokeWidth={1.75} />
@@ -276,7 +276,7 @@ export default function ExportPage() {
       {/* ================== 页面标题 ================== */}
       <header className="space-y-2">
         <div className="flex items-baseline gap-3">
-          <h1 className="font-display text-3xl tracking-tight text-warm-900">
+          <h1 className="font-display text-2xl sm:text-3xl tracking-tight text-warm-900">
             导出报告
           </h1>
           <span className="text-2xs text-warm-400 uppercase tracking-widest font-mono">
@@ -290,7 +290,7 @@ export default function ExportPage() {
 
       {/* ================== 日期筛选 ================== */}
       <section className="card p-6 animate-in animate-in--delay-1">
-        <div className="flex items-center justify-between mb-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
           <h2 className="text-sm font-semibold text-warm-800 flex items-center gap-2">
             <Filter className="w-4 h-4 text-accent-500" strokeWidth={2} />
             日期筛选
@@ -314,7 +314,7 @@ export default function ExportPage() {
           </div>
         </div>
 
-        <div className="flex items-end gap-3">
+        <div className="flex flex-wrap items-end gap-3">
           <div className="flex-1 space-y-1.5">
             <label className="text-2xs text-warm-500 flex items-center gap-1 font-medium">
               <Calendar className="w-3 h-3" /> 开始日期
@@ -385,7 +385,7 @@ export default function ExportPage() {
       </section>
 
       {/* ================== 数据统计卡片 ================== */}
-      <section className="grid grid-cols-4 gap-4">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
         <StatCard
           label="投递总数"
           value={stats.total}

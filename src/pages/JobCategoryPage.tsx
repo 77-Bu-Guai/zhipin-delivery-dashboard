@@ -71,16 +71,16 @@ export default function JobCategoryPage() {
     <div className="w-full space-y-8 animate-in">
       {/* 页面标题 */}
       <div className="flex items-center gap-4">
-        <h2 className="font-display text-3xl tracking-tight text-warm-900 dark:text-warm-100">
-          岗位分类
-        </h2>
+          <h2 className="font-display text-2xl sm:text-3xl tracking-tight text-warm-900 dark:text-warm-100">
+            岗位分类
+          </h2>
         <span className="text-sm text-warm-400">
           共 <span className="text-warm-700 dark:text-warm-300 font-semibold">{logs.length}</span> 个岗位
         </span>
       </div>
 
       {/* 分类卡片网格 */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
         {allCategories.map(({ category, color }, idx) => {
           const group = groups.find(g => g.category === category);
           const count = group?.count ?? 0;

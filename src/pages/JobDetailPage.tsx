@@ -92,10 +92,10 @@ export default function JobDetailPage() {
 
       {/* 岗位头部 */}
       <div className="card p-6">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
           <div className="space-y-2.5">
             <h2 className="font-display text-2xl tracking-tight text-warm-900">{log.jobTitle}</h2>
-            <div className="flex items-center gap-5 text-sm text-warm-500">
+            <div className="flex flex-wrap items-center gap-3 sm:gap-5 text-sm text-warm-500">
               <span className="flex items-center gap-1.5">
                 <Building2 className="w-4 h-4 text-warm-400" />
                 <span className="text-warm-700 font-medium">{log.companyName}</span>
@@ -124,9 +124,9 @@ export default function JobDetailPage() {
       </div>
 
       {/* JD + 加分项 */}
-      <div className="grid grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 lg:gap-6">
         {/* JD */}
-        <div className="col-span-3 card p-6">
+        <div className="lg:col-span-3 card p-6">
           <h3 className="text-base font-semibold text-warm-800 mb-4 flex items-center gap-2">
             <Briefcase className="w-4.5 h-4.5 text-accent-500" strokeWidth={2} />
             职位描述 (JD)
@@ -167,7 +167,7 @@ export default function JobDetailPage() {
         </div>
 
         {/* 加分项 */}
-        <div className="col-span-2 space-y-4">
+        <div className="lg:col-span-2 space-y-4">
           <div className="card p-6">
             <h3 className="text-base font-semibold text-warm-800 mb-4 flex items-center gap-2">
               <Star className="w-4.5 h-4.5 text-amber-500" strokeWidth={2} />
@@ -252,7 +252,7 @@ export default function JobDetailPage() {
           {/* 总分 */}
           <div className="flex items-center justify-center py-4">
             <div className="text-center">
-              <div className={`font-display text-6xl tracking-tight ${aiScore.totalScore >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+              <div className={`font-display text-4xl sm:text-6xl tracking-tight ${aiScore.totalScore >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                 {aiScore.totalScore >= 0 ? '+' : ''}{aiScore.totalScore}
               </div>
               <p className="text-xs text-warm-400 mt-1">综合评分 = 加分 + 扣分</p>

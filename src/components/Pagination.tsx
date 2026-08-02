@@ -55,7 +55,7 @@ export default function Pagination({
   };
 
   return (
-    <div className="flex items-center justify-between px-5 py-3 border-t border-warm-100 bg-warm-50/30">
+    <div className="flex flex-col gap-3 px-5 py-3 border-t border-warm-100 bg-warm-50/30 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-2 text-xs text-warm-500">
         <span>每页</span>
         <select
@@ -70,7 +70,7 @@ export default function Pagination({
         <span>{label}，共 {total} {label}</span>
       </div>
 
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1 flex-wrap justify-center">
         <button
           onClick={() => onPageChange(1)}
           disabled={safePage === 1}
